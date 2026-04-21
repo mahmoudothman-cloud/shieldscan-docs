@@ -1488,6 +1488,24 @@ Ongoing:
 - Vulnerability disclosure program
 - Security.txt at https://shieldscan.io/.well-known/security.txt
 
+### 11.5 PostgreSQL Role Model
+
+Two database roles exist in production:
+
+- **`shieldscan` (admin)** — superuser, used only for migrations and maintenance. Connections from this role **BYPASS RLS**. Never used by the application.
+
+- **`shieldscan_app` (runtime)** — non-superuser, used by the application at runtime. Subject to RLS policies. Has `SELECT`/`INSERT`/`UPDATE`/`DELETE` on tables it needs, no schema DDL.
+
+**Rationale:** PostgreSQL superusers and roles with `rolbypassrls=true` bypass RLS regardless of `FORCE ROW LEVEL SECURITY`. Running the app as a non-superuser role is the only way to guarantee tenant isolation.
+
+**Failure mode:** if the production app ever connects as `shieldscan` (admin) by accident, cross-tenant data leaks become possible. Enforced via:
+
+- Startup check in `app/main.py` that asserts `current_user != 'shieldscan'`
+- Connection string validation in config
+- Alerting on `pg_stat_activity` showing `shieldscan` with app-like query patterns
+
+See `tests/conftest.py` `use_org()` for the tenant context mechanism.
+
 ---
 
 ## 12. Cost Management

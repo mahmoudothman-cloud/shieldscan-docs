@@ -250,6 +250,14 @@ Our Python-based security tools (Semgrep, SSLyze, Wapiti, Checkov) are CLI tools
 
 See VERSIONS.md Appendix C for the full 24.04 provisioning guide.
 
+### Gotcha 12: RLS Requires Non-Superuser App Role
+
+PostgreSQL superusers bypass RLS unconditionally — **`FORCE ROW LEVEL SECURITY` does NOT help**. The app connects as `shieldscan_app` (non-superuser), never as `shieldscan` (admin/migration role). Tests enforce this by calling `SET ROLE shieldscan_app` on every test connection. If you see RLS behavior differ between dev and tests, **first check the connection's current role**.
+
+Also: custom GUCs like `app.current_org_id` are session-local. SQLAlchemy releases connections back to the pool on `commit()`, which strands the GUC. For tests, bind `AsyncSession` to a single persistent `AsyncConnection`. For production, either `SET` the GUC at the start of every request OR use a per-request connection checkout that re-applies it.
+
+See OPERATIONS-RUNBOOK.md §11.5 for the full role model.
+
 ---
 
 ## Workflow Patterns
