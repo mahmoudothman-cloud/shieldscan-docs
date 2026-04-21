@@ -73,6 +73,33 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-21 — Secure comparison of security-sensitive values (pattern)
+
+**Pattern, not a one-off.** Any plan literal using `==` (or equivalent) to compare security-sensitive values — tokens, hashes, HMACs, API keys, session IDs, signing-key-derived values — must be replaced with `hmac.compare_digest` (Python stdlib). Applies retroactively to code review and forward to all future tasks.
+
+**Rationale:** `==` on strings/bytes short-circuits on the first mismatching byte. Timing differences across requests let an attacker recover the secret byte-by-byte. `hmac.compare_digest` runs in time dependent only on the shorter operand's length, not its contents.
+
+**Applies to:** `verify_api_key` (Task 2.2, applied), any future token validators (Task 2.3+ refresh-token rotation, email verification tokens, password reset tokens), HMAC webhook signatures (Stripe in M10, any inbound signed callback).
+
+**Does NOT apply to:** comparing non-secret public values (email addresses, usernames, URLs, organization slugs). `==` is correct there — constant-time comparison of public strings costs performance without adding security.
+
+### 2026-04-21 — Task 2.2: verify_api_key uses hmac.compare_digest (not ==)
+
+**Minor deviation.** IMPLEMENTATION-PLAN.md §2.2 literal:
+
+```python
+def verify_api_key(plain: str, stored_hash: str) -> bool:
+    return hashlib.sha256(plain.encode()).hexdigest() == stored_hash
+```
+
+**Actual implementation:** `hmac.compare_digest(candidate_hash, stored_hash)`.
+
+**Reason:** `==` on the candidate hash vs stored hash is vulnerable to timing analysis on the API-key auth path. `compare_digest` is the correct stdlib primitive for comparing secrets. Not ADR-worthy — this is implementation-of-existing-requirement (secure comparison), not new architecture. Falls under the "secure comparison of security-sensitive values" pattern logged above.
+
+**Applied:** `shieldscan-api/src/app/services/api_keys.py`.
+**Approved:** user, 2026-04-21.
+**Commit:** `ace008e` (shieldscan-api).
+
 ### 2026-04-21 — Task 2.1: direct bcrypt (replacing passlib)
 
 **Plan deviation.** IMPLEMENTATION-PLAN.md §2.1 imports `passlib.context.CryptContext`. Actual implementation uses the `bcrypt` library directly.
