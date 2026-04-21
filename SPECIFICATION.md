@@ -1136,6 +1136,31 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 **Decision:** Build full 9-category platform rather than specialize in one area.
 **Rationale:** Every major competitor specializes (Snyk: SAST+SCA, Burp: DAST, MobSF: mobile only). Unified full-spectrum platform is unique market position at SME price point.
 
+### ADR-010: Password Hashing and JWT Signing Choices
+**Status:** Accepted (2026-04-21)
+
+**Context:**
+- IMPLEMENTATION-PLAN.md §2.1 originally specified `passlib.context.CryptContext` as the password-hashing wrapper.
+- At Task 2.1 implementation we discovered `passlib 1.7.4` (its last release, Oct 2020) is incompatible with `bcrypt >= 4.1`: it probes `bcrypt.__about__.__version__`, an attribute the newer bcrypt library has removed. The failure path silently raises a misleading "password cannot be longer than 72 bytes" error on arbitrary inputs.
+- `passlib` has had no release in over 5 years and is effectively unmaintained.
+
+**Decision (password hashing):**
+- Use the PyPA-maintained `bcrypt` library directly; remove `passlib`.
+- Cost factor **12**, pinned explicitly via `bcrypt.gensalt(rounds=12)`.
+- Abstraction boundary is `hash_password(pwd)` / `verify_password(plain, hashed)` in `app.services.auth`. Internals can be swapped (e.g. to Argon2id) later without changing call sites.
+
+**Decision (JWT signing):**
+- **HS256** for now. Acceptable because:
+  - Single signing key, held only by `shieldscan-api`.
+  - No inter-service verification requirement yet.
+- Revisit **RS256** (asymmetric) when any of: (a) a service outside `shieldscan-api` must verify tokens, (b) enterprise tier launches with multi-region key distribution, or (c) a compliance requirement demands it.
+
+**Consequences:**
+- `passlib` removed from `VERSIONS.md` and `shieldscan-api/pyproject.toml`.
+- `bcrypt` pinned directly (`^5.0`).
+- The bcrypt 72-byte password-length limit becomes an API-layer concern: the register endpoint (Task 2.2) must explicitly reject passwords >72 bytes with HTTP 400. `hash_password`/`verify_password` do not enforce it.
+- Crypto-agility is preserved — migrating to Argon2id later touches only the two service-layer functions.
+
 ---
 
 ## 14. Glossary
