@@ -86,6 +86,7 @@ pytest-asyncio = "^0.24.0"
 pytest-cov = "^5.0.0"
 ruff = "^0.8.0"
 mypy = "^1.13.0"
+fakeredis = "^2.35"            # hermetic Redis for rate-limiter + revocation tests
 ```
 
 **Note:** Minor version floors (`^`) allow compatible upgrades. Exact pinning happens in `poetry.lock` — commit the lockfile.
