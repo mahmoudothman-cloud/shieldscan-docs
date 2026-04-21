@@ -73,6 +73,29 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-21 — Task 2.1: direct bcrypt (replacing passlib)
+
+**Plan deviation.** IMPLEMENTATION-PLAN.md §2.1 imports `passlib.context.CryptContext`. Actual implementation uses the `bcrypt` library directly.
+
+**Reason:** passlib 1.7.4 (its last release, Oct 2020) probes `bcrypt.__about__.__version__` — an attribute removed in bcrypt 4.1. With the installed bcrypt 5.0.0 the probe fails silently and passlib raises a misleading `ValueError: password cannot be longer than 72 bytes` on any input. passlib is effectively unmaintained (5+ years no release).
+
+**Options considered at Task 2.1:**
+- **A.** Pin `bcrypt < 4.1` — rejected, pins to an EOL bcrypt line and creates future CVE exposure.
+- **B.** Monkey-patch `bcrypt.__about__` — rejected, encodes a workaround in product code.
+- **C.** Drop passlib, use `bcrypt` directly — **chosen.** 8 LoC, PyPA-maintained, future-proof. The spec-level requirement ("bcrypt cost=12 hashing") is satisfied identically.
+
+**Applied:**
+- `shieldscan-api/pyproject.toml`: `passlib` removed, `bcrypt = "^5.0"` added.
+- `VERSIONS.md §2.3`: same swap (docs commit `d75ff51`).
+- `SPECIFICATION.md §13`: ADR-010 added (docs commit `4e6099e`).
+- `shieldscan-api/src/app/services/auth.py`: calls `bcrypt.hashpw` / `bcrypt.checkpw` directly.
+
+**Consequence:** the bcrypt 72-byte password-length limit is now an API-layer concern — Task 2.2 register endpoint must reject passwords >72 bytes with HTTP 400. `hash_password`/`verify_password` do not enforce.
+
+**Approved:** user, 2026-04-21.
+**ADR:** 010 (SPECIFICATION.md §13).
+**Commit:** `f6b9bbf` (shieldscan-api).
+
 ---
 
 ## Closed
