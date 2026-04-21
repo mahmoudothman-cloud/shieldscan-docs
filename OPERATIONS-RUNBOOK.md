@@ -1506,6 +1506,37 @@ Two database roles exist in production:
 
 See `tests/conftest.py` `use_org()` for the tenant context mechanism.
 
+### 11.6 Redis as a Hard Dependency of the Auth Path
+
+**Introduced with M2.3.** Once the rate limiter and refresh-token revocation list ship, the API cannot authenticate requests if Redis is unreachable. We deliberately **fail closed**: no bypass, no degraded "auth without rate limiting" mode. A bypass would let an attacker induce Redis unavailability (e.g. via connection-pool exhaustion on Redis) to disable brute-force protection.
+
+**What depends on Redis:**
+
+| Auth operation | Redis reason | Failure behavior |
+|---|---|---|
+| `POST /auth/register` | rate limiter INCR | 503 (retry with backoff) |
+| `POST /auth/login` | rate limiter INCR (IP + email) | 503 |
+| `POST /auth/refresh` | revocation-list check on incoming jti, INCR of revoked jti | 401 on uncertainty — never "let the token through because Redis is down" |
+| `POST /auth/logout` | INCR of both access + refresh jti into revocation list | 503 — client MUST retry until logout is acknowledged |
+| any authenticated request | revocation-list check on access jti | 401 on uncertainty |
+
+**Liveness vs readiness:**
+- **Liveness probe** (`/health`) — stays green as long as the process is alive. Does NOT depend on Redis (otherwise a Redis blip kills the pod unnecessarily).
+- **Readiness probe** (`/ready`, added with M2.3) — fails if Redis PING does not return PONG within 500ms. Load balancer stops routing until Redis recovers.
+
+**Alerting threshold:** PagerDuty P1 if `/ready` returns non-200 for more than 30 seconds across more than 50% of API pods. Auth is a revenue-critical path.
+
+**Recovery order after Redis outage:**
+1. Redis itself is restored (see §6.x Redis operations).
+2. API pods' readiness probes flip green within ~5s as the singleton client reconnects (redis-py's async client reconnects lazily on next command).
+3. Load balancer returns pods to the rotation.
+4. **Do NOT flush Redis** during recovery — the revocation list contains jti's for compromised tokens. Flushing re-enables them until their natural expiry.
+5. Rate-limit counters ARE lost on Redis restart. This is acceptable (attackers get one free window) and correct (legitimate users are not penalized for our outage).
+
+**What tests cover:**
+- Rate limiter interface via `fakeredis.aioredis` (shieldscan-api commit `e425ace`). No live Redis in CI.
+- Integration smoke in docker-compose.dev.yml brings up a real Redis 8.6.2.
+
 ---
 
 ## 12. Cost Management
