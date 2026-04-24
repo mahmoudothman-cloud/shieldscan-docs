@@ -1199,6 +1199,47 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - `shieldscan-api` commit `88b6966` — `token_revocation.py` primitive
 - `shieldscan-api` commit `711dfbc` — revocation integrated into `/auth/refresh` + `/auth/logout`
 
+### ADR-012: Credential-Indexed Tables Use App-Layer Tenant Scoping
+**Status:** Accepted (2026-04-21)
+
+**Context:**
+- M1 established RLS at the DB layer for all tenant-scoped tables (see M1.6, `policies.py`, `TENANT_TABLES`).
+- RLS policies require `current_setting('app.current_org_id')` to be set before queries return rows.
+- API-key authentication creates a chicken-and-egg problem: the lookup by `key_hash` MUST precede establishing tenant context, because the org is unknown until the row is read.
+- This problem is not unique to `api_keys`. Any "lookup by opaque credential" pattern has the same shape (webhook-signature verification, invitation tokens, password-reset tokens if DB-backed, etc.).
+
+**Decision:**
+- Tables where the row identifier IS the credential bypass RLS.
+- For these tables, tenant scoping is enforced at the **application layer**: every query path that reads these tables either
+  (a) looks up by the opaque credential (hash match = proof of ownership, no further scoping needed), or
+  (b) explicitly filters `WHERE organization_id = :authenticated_org`.
+- Tables in this category must be enumerated in a `CREDENTIAL_INDEXED_TABLES` constant in `policies.py` with a justification string.
+- The first table in this category: `api_keys`.
+
+**Why this is not a security regression:**
+- `api_keys` rows can only be read via:
+  - `key_hash` lookup (reading requires the plaintext, which IS the credential — reader is already authenticated for that org), or
+  - list/delete by org (explicit org filter at application layer).
+- RLS provides defense-in-depth when app-layer scoping might be forgotten. Here, forgetting the org filter would be equally visible in either regime — both a missing RLS policy and a missing `WHERE` clause fail noisy code review.
+- The alternative (`SECURITY DEFINER` function) introduces a permanent bypass primitive with worse properties: future engineers may reuse it incorrectly, and the defense becomes "the function is written correctly" rather than "the lookup pattern is cryptographically self-protecting."
+
+**Consequences:**
+- `api_keys` has no RLS policy, no `FORCE ROW LEVEL SECURITY`, and is NOT in `TENANT_TABLES`.
+- New `CREDENTIAL_INDEXED_TABLES: Final[dict[str, str]]` constant in `policies.py` lists `api_keys` with a justification comment.
+- **Adding any future table to `CREDENTIAL_INDEXED_TABLES` requires an ADR amendment** — not just a code change. The justification string is the forcing function for code review.
+- App-layer cross-tenant isolation tests replace DB-layer tests for `api_keys`; the list endpoint test and delete endpoint test MUST include cross-tenant scenarios with an assertion that other orgs' keys are invisible.
+- `audit_logs` append-only trigger still applies — `api_keys` row changes still go to `audit_logs`.
+
+**Alternatives considered:**
+- **`SECURITY DEFINER` function:** rejected. Introduces a permanent bypass primitive; defense becomes function-correctness rather than lookup-pattern-correctness; pattern may be misused later.
+- **GUC carve-out (`app.api_key_lookup = 'true'`):** rejected. Session-level GUC that bypasses RLS is a security footgun; forgetting to unset leaves the entire session bypassing.
+- **Prefix-encoded org id:** rejected. Breaks Task 2.2's `env`-prefix convention; leaks org identity through the key.
+
+**Cross-references:**
+- ADR-011 (revocation strategy for JWT, also Redis-backed)
+- `shieldscan-api` commit `9a4e2c1b7d3f` Alembic rev + `policies.py` refactor (Task 2.4 Commit 0)
+- `shieldscan-api` regression tests: `tests/models/test_credential_indexed_rls.py`
+
 ---
 
 ## 14. Glossary
