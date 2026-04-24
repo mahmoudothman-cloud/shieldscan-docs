@@ -73,6 +73,59 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-23 — Task 3.1: PATCH target_url auto-resets domain verification when root_domain changes
+
+**Decision.** `PATCH /v1/orgs/{org_id}/projects/{id}` with a `target_url` field that produces a different `root_domain` automatically:
+- Updates `project.root_domain` to the new derived value
+- Sets `project.domain_verified = False`
+- Mints a fresh `project.verification_token = uuid4().hex`
+
+Path/port-only changes within the same `root_domain` do NOT reset verification — those are legitimate same-domain target updates.
+
+**Rationale:** verifying a domain is a security claim ("this org controls example.com"). Allowing a verified `target_url` to silently move to `different.org` while keeping `domain_verified=True` would let any project member silently re-aim a verified target at a domain they don't actually control. Auto-resetting forces a re-verification round at Task 3.2's `/verify` endpoint.
+
+**Pinned by tests:**
+- `test_patch_target_url_same_domain_keeps_verification` (no reset on same-domain change)
+- `test_patch_target_url_different_domain_resets_verification` (reset + token rotation on cross-domain)
+
+**Commits:** `shieldscan-api` `fdcb0db`.
+
+### 2026-04-23 — Task 3.1: GET on archived project returns 200, not 404
+
+**Decision.** `GET /v1/orgs/{org_id}/projects/{id}` for an archived project returns **200 with `archived_at` populated** in the response body, not 404.
+
+**Rationale:** soft-delete is a reversible state, not absent state. Archived projects retain scan history that users may legitimately reference. List endpoints filter archived out by default (`?archived=true` includes them), but single-project GET always returns the row regardless of archive status.
+
+**This is also part of the broader pattern** ADR-012 establishes for app-layer scoping: cross-tenant lookups return 404 (existence leak avoidance), but in-tenant lookups return 200 even when the row is "soft-deleted." 410 Gone is reserved for the **DELETE→DELETE** double-action signal.
+
+**Pinned by `test_get_archived_project_returns_200`.**
+
+### 2026-04-23 — Task 3.1: tldextract PSL vendoring carry-forward to M12.5
+
+`tldextract` (added in Task 3.1 for `extract_root_domain`) consults the Mozilla Public Suffix List. Default behavior fetches+caches the PSL on first use. For air-gapped on-prem deployments (M12.5+) we'll need to **ship a vendored snapshot** of the PSL alongside the application — the runtime fetch is not available in restricted-network environments.
+
+**Action carried forward to M12.5:** as part of the on-prem deployment build, vendor a current PSL snapshot into the app distribution and configure `tldextract.TLDExtract(suffix_list_urls=(), cache_dir=<bundled>)` to use it. PSL refresh policy: re-vendor on each release; PSL changes glacially so manual refresh is fine.
+
+Not blocking M3 / SaaS deployment (default PSL fetch works there).
+
+### 2026-04-23 — Task 3.1: PATCH project — `extra="forbid"` blocks immutable fields at schema level
+
+**Pattern note (not a deviation).** `ProjectUpdateRequest` uses `model_config = ConfigDict(extra="forbid")` so that any client sending `organization_id`, `root_domain`, `domain_verified`, `verification_token`, `id`, or `archived_at` in the PATCH body gets a 422 — these fields aren't on the schema at all.
+
+**Why this matters as a pattern for M3+:** every PATCH endpoint shipped after this should use the same `extra="forbid"` posture. Without it, Pydantic v2's default (`extra="ignore"`) silently drops unknown fields, which means a client trying to write to an immutable column gets a 200 success response with no field change — confusing, and a security footgun (think: a client trying to PATCH `is_admin` on a member resource and getting "success" back).
+
+**Convention going forward:** every UpdateRequest schema in M3+ MUST set `extra="forbid"`. Pinned in 3.1 by `test_patch_project_immutable_fields_rejected`.
+
+### 2026-04-23 — Task 3.1: API-key URL spec misalignment carry-forward
+
+**Carry-forward from M2.** `SPECIFICATION.md` §6.2 (line 466–467) lists API-key endpoints under `/orgs/:org_id/api-keys`. Task 2.4 shipped them at `/v1/auth/api-keys` (no `/orgs/:org_id/` prefix). The shipped paths are reasonable for an account-scoped resource where the org is implicit from the JWT, but they diverge from the spec literal.
+
+**Resolution deferred** to a future docs-only commit (no code change needed; both options remain on the table). Two paths:
+- Option A: update `SPECIFICATION.md` §6.2 to match the shipped `/v1/auth/api-keys` paths (codifies what shipped).
+- Option B: add route aliases under `/v1/orgs/{org_id}/api-keys` that delegate to the existing handlers (spec-literal compliance with backward compat).
+
+Either is fine. Logged here so it doesn't get forgotten between M3 and the M12.5 / pre-launch documentation pass.
+
 ### 2026-04-23 — Task 2.Y closes SPECIFICATION/IMPLEMENTATION-PLAN gap
 
 **Plan/spec misalignment, resolved.** SPECIFICATION.md §6 (lines 447–448) enumerated `/auth/forgot-password` + `/auth/reset-password` as part of the auth API surface alongside register/login/refresh/logout/verify-email. IMPLEMENTATION-PLAN.md never numbered these as a task — its M2 section stops at Task 2.5 (email verification flow).
