@@ -73,6 +73,74 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-21 — Task 2.4: intentional breaking change to `/auth/me` response shape
+
+**Pre-launch breaking change, documented for the audit trail.**
+
+Task 2.3 shipped `/v1/auth/me` returning a flat `UserResponse`:
+
+```json
+{"id": "...", "email": "...", "full_name": "...", "email_verified": true}
+```
+
+Task 2.4 reshapes it to `AuthIdentityResponse` — a discriminated-union on `kind` — to accommodate API-key-credentialed callers (per Task 2.4 endpoint policy: API keys are allowed on `/auth/me` for CI-verify use cases). The new shape:
+
+```json
+{
+  "kind": "jwt" | "api_key",
+  "organization": {"id": "...", "name": "...", "slug": "..."},
+  "user":    { ...UserResponse... } | null,
+  "api_key": { ...APIKeySummary... } | null
+}
+```
+
+**Why it's the right call now:**
+- Pre-launch — no external clients yet. Reshape cost: zero.
+- Alternative A (flat UserResponse with synthetic user for API-key callers) creates the "optional-field soup" problem we avoided with scopes (deferred in 2.4).
+- Alternative C (new `/auth/whoami` endpoint, leave `/auth/me` JWT-only) splits the client-side branch into "check credential kind first, then call the right endpoint." Worse UX; the discriminated-union shape collapses the branch to one endpoint + one `switch (body.kind)`.
+- Alternative B (chosen) is a discriminated union at the schema level rather than optional-field soup — clients branch on `kind`, and the field absent at serialization is `null`, not missing.
+
+**What changed in code:**
+- `/v1/auth/me` dep swapped from `get_current_user` (JWT-only) to `get_auth_identity` (either kind).
+- New response schemas: `AuthIdentityResponse`, `OrganizationSummary` in `src/app/schemas/api_keys.py`.
+- Existing test `test_me_returns_user` renamed to `test_me_returns_identity_for_jwt` and updated for the new shape; new `test_me_returns_identity_for_api_key` added.
+
+**Post-launch discipline:** once external clients exist, changes to `/auth/me` (or any public response shape) go through versioned endpoints (`/v2/auth/me`) or additive-only field additions. This Task 2.4 reshape used the pre-launch window deliberately; future reshapes won't have that option.
+
+**Commits:** `shieldscan-api` `af4c1d9`.
+
+### 2026-04-21 — RLS UUID-cast behavior is a security positive (not a deviation)
+
+Discovery during Task 2.4 Commit 0 while writing the CREDENTIAL_INDEXED_TABLES regression guard: the `tenant_isolation` RLS policy uses `current_setting('app.current_org_id')::uuid` in its `USING` clause, which raises `invalid input syntax for type uuid: ""` when the GUC is unset (empty string) rather than silently returning zero rows.
+
+This is a **stronger security mode** than silent-zero-rows:
+- Silent zero rows: ambiguous — "no data exists" vs "not authorized" look the same to the caller.
+- Loud UUID cast error: unambiguous — "you tried to query tenant data without tenant context" is distinguishable from "you queried data that doesn't exist."
+
+Legitimate code paths always set the GUC (orchestrator, endpoints, tests via `use_org`); accidental bypass attempts produce loud `DBAPIError`s that fail noisily rather than silently succeed with empty results.
+
+**Code at risk:** any caller that swallows `DBAPIError` and returns `[]` would mask a tenant-context bug. Reviewed during Task 2.4 Commit 0 — our error-handling paths all propagate `DBAPIError` upward.
+
+**Not a deviation — a discovery.** Logging here so when someone asks in 12 months "what happens if `current_org_id` isn't set in production?" the answer is recorded.
+
+### 2026-04-21 — Dummy-bcrypt timing test: security-test-suite candidate
+
+**Decision at Task 2.3 close:** skip the timing-distribution test for `login_nonexistent_user` vs `login_wrong_password` in the unit-test suite. CI-flaky; the mechanism is already locked by `test_login_runs_verify_password_on_nonexistent_user` which asserts the code path is taken.
+
+**Follow-up:** actual timing-distribution testing belongs in a separate **performance/security test suite** (tentatively `tests/security/` with `@pytest.mark.security` marker, runs in a dedicated CI job with a quiet machine). Candidate tests to land there when the suite is created:
+- `test_login_timing_distribution_no_enumeration` — 100 logins of each kind (wrong-password, no-such-user), assert p95 times overlap within 50ms.
+- Similar distribution tests for other constant-time-critical paths (`verify_api_key`, future HMAC webhook verification).
+
+**Not a blocker.** Not a Task-level item. File for the ops-hardening milestone.
+
+### 2026-04-21 — M12.5 prerequisite: email send failure retry + DLQ
+
+**Deferred from Task 2.3 with explicit M12.5 tie.** `ConsoleEmailService` stub cannot fail; real SMTP (M12.5) can. First task in M12.5 MUST add retry + audit-correction-on-failure for the email send path in `identity.py` (`register_identity` post-commit email dispatch) and any future email-sending callsite.
+
+**Why audit-correction matters:** Task 2.3 audits `EMAIL_VERIFICATION_SENT` inside the register transaction, before the email actually fires. A silent email-delivery failure post-commit would leave the audit log saying "sent" when nothing was sent. M12.5 must close this by either (a) moving the audit to post-send-success, or (b) adding an `EMAIL_DELIVERY_FAILED` compensating audit action and firing it on SMTP failure.
+
+**Log this in OPERATIONS-RUNBOOK §11.6** next time that file is edited — no standalone docs commit per user direction 2026-04-21.
+
 ### 2026-04-21 — M1 latent shadowing bug: `src/app/db.py` unreachable
 
 **Discovered during Sub-task 2.3.4 Commit 2** when `get_db` needed `AsyncSessionLocal`: `src/app/db.py` was shadowed by the `src/app/db/` package (empty `__init__.py` took precedence). The file had been dead since M1 — no imports, no test coverage, no runtime reach. All 107 M1-era tests passed because nothing depended on the orphaned symbols.
