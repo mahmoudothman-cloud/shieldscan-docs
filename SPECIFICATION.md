@@ -1169,11 +1169,9 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - Options considered: stateful session store, DB-backed revocation list, Redis-backed revocation list, signed-token-version (global bump).
 
 **Decision:**
-- **Primary mechanism:** Redis `SET revoked_jti:{jti} 1 EX (exp - now)`.
-- Auth path checks `is_revoked(jti)` immediately after signature verification in `get_current_user` (and in `/auth/refresh` for refresh tokens).
-- TTL auto-matches the token's own lifetime — no GC / reaper needed.
+- **Primary mechanism (targeted, per-jti):** Redis `SET revoked_jti:{jti} 1 EX (exp - now)`. Auth path checks `is_revoked(jti)` after signature verification in `get_auth_identity` (and in `/auth/refresh` for refresh tokens). TTL auto-matches the token's own lifetime — no GC / reaper needed.
 - **Refresh-rotation ordering: revoke OLD jti BEFORE minting NEW tokens.** If the mint fails after a successful revoke, the worst case is the client re-logs-in. If we minted first and then lost the revoke, the client would briefly hold two valid refresh tokens (security issue). Fail-closed.
-- **Deferred — user-level revocation:** on password change / admin revoke-all we will set `user_revoked_before:{user_id}` = now() and compare against the token's `iat` claim. The `iat` hook is already in place (shieldscan-api `4d32fcc`); the consumer endpoint lands with the password-change task.
+- **User-level revocation (shipped in Task 2.X):** Redis `SET user_revoked_before:{user_id} <unix_ts> EX (JWT_REFRESH_TOKEN_EXPIRE_DAYS × 86400)`. Auth path compares the token's `iat` claim against the stored timestamp; `iat < revoked_before` → 401. Used by `POST /auth/password/change` to invalidate every token issued before the change without enumerating jtis. Consumer hooks for future admin-force-logout / account-recovery / compromise-response are now in place. Short-circuits on missing key (Option C — sub-millisecond Redis GET on the 99.9% no-revocation path).
 
 **Consequences:**
 - Redis becomes a hard dependency of the auth path (cross-ref OPERATIONS-RUNBOOK §11.6).
@@ -1182,10 +1180,10 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - Revocation-key space grows with revocations but auto-expires with TTL; no unbounded growth.
 - Multi-region deployment requires Redis replication OR per-region revocation (deferred — single-region in M2).
 
-**Reuse-detection behavior (Task 2.3.4):**
+**Reuse-detection behavior (Task 2.3.4 + Task 2.X amendment):**
 - If a client presents a refresh token whose `jti` is already in the revocation list, we treat it as a **compromise signal** — legitimate clients never replay an already-rotated refresh token.
 - The `/refresh` endpoint audits `auth.token.revoked` with `details={"reason": "reuse_detected", "token_jti": <jti>}` and returns 401.
-- **Full user-level revocation on reuse is deferred** to the password-change endpoint (later M2) which will ship the `user_revoked_before:{user_id}` machinery. Until then, a reuse event invalidates only the reused token, not all of the user's outstanding tokens.
+- **Auto-trigger of user-level revocation on reuse is deliberately NOT enabled** even though the mechanism is now available (Task 2.X). Considerations: legitimate network-blip retries could trigger false positives, the signal is observability-poor (no undo path), and revocation storms from buggy client libraries would be self-amplifying. A future ADR will revisit with a deliberate policy decision; until then, reuse-detection remains targeted-jti-only. See DRIFT-LOG 2026-04-23.
 
 **Alternatives rejected:**
 - **DB-backed revocation list:** auth-path DB hit on every authenticated request. Unacceptable performance ceiling — O(1) Redis is strictly better.
@@ -1198,6 +1196,8 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - `shieldscan-api` commit `4d32fcc` — `iat` claim added (user-level hook)
 - `shieldscan-api` commit `88b6966` — `token_revocation.py` primitive
 - `shieldscan-api` commit `711dfbc` — revocation integrated into `/auth/refresh` + `/auth/logout`
+- `shieldscan-api` commit `07d0189` — user-level revocation primitive + auth-path check (Task 2.X Commit 1)
+- `shieldscan-api` commit `1bb0b66` — `/auth/password/change` endpoint (Task 2.X Commit 2)
 
 ### ADR-012: Credential-Indexed Tables Use App-Layer Tenant Scoping
 **Status:** Accepted (2026-04-21)
