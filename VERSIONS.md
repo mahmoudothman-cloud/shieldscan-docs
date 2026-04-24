@@ -71,6 +71,7 @@ stripe = "^11.0.0"
 boto3 = "^1.35.0"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 bcrypt = "^5.0"                # direct bcrypt (not passlib) — see ADR-010
+python-slugify = "^8.0"        # organization slug generation in identity orchestrator
 cryptography = "^43.0.0"
 weasyprint = "^62.3"
 jinja2 = "^3.1.4"
