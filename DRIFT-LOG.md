@@ -73,6 +73,20 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-23 — Task 3.2: idempotent re-verify emits a fresh audit row
+
+**Decision pin (no code change).** A successful `POST /v1/orgs/{org_id}/projects/{id}/verify` on a project where `domain_verified` was already `True` emits a fresh `PROJECT_DOMAIN_VERIFIED` audit row regardless. The DB-side state transition is a no-op (column was True, stays True), but the audit log gets a new entry on every attempt.
+
+**Rationale:** audit logs track *events*, not *state*. A re-verify action IS an event — the user took an action, the system performed a check, the check succeeded. Suppressing the audit because the end state is identical would lose information:
+
+- *When* did the customer re-verify? (Sequence of timestamps tells us.)
+- *How often* are they re-verifying? (A sustained re-verify cadence often correlates with troubleshooting DNS issues elsewhere — operationally useful intel.)
+- *Did they verify, lose access, then re-verify successfully?* (The audit trail makes this visible; deduplication would mask it.)
+
+Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires on every failure attempt regardless of prior state — symmetric treatment of attempts on both success and failure paths.
+
+**For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
+
 ### 2026-04-23 — Task 3.2: per-domain audit-action enum split
 
 **Refactor.** The single `AuthAction` enum was accreting non-auth values (`EMAIL_VERIFICATION_SENT`, `PASSWORD_RESET_*`, etc.) — adding M3's project events (`PROJECT_CREATED`, `PROJECT_DOMAIN_VERIFIED`, …) would sprawl it further. Split now at the natural M3 boundary (the longer the split is deferred, the more painful it becomes).
