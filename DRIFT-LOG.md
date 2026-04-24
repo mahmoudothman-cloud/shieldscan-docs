@@ -73,6 +73,56 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-23 — Task 2.Y closes SPECIFICATION/IMPLEMENTATION-PLAN gap
+
+**Plan/spec misalignment, resolved.** SPECIFICATION.md §6 (lines 447–448) enumerated `/auth/forgot-password` + `/auth/reset-password` as part of the auth API surface alongside register/login/refresh/logout/verify-email. IMPLEMENTATION-PLAN.md never numbered these as a task — its M2 section stops at Task 2.5 (email verification flow).
+
+**Per the CLAUDE.md document hierarchy** (SPECIFICATION wins over IMPLEMENTATION-PLAN on product truth), this is a contract gap to close, not scope creep to defer. M2 ships these endpoints as Task 2.Y to leave the spec and the implementation in agreement.
+
+**Composition cost was small** because Task 2.X had just shipped the user-level revocation primitive (`set_user_revoked_before`) — reset is functionally a forced password change and reuses every existing pattern (token-issuance from 2.3.3, GETDEL atomic consumption from 2.5, no-enumeration policy from resend-verification, audit reserved enums from 2.3.2, rate-limit dual scope from login).
+
+**Commit:** `shieldscan-api` `74cc9ee`.
+
+### 2026-04-23 — Task 2.Y: reset token TTL = 1 hour
+
+**Decision.** Password-reset tokens expire in 1 hour, set as `TOKEN_TTL_SECONDS = 3600` in `src/app/services/password_reset.py`.
+
+**Reasoning:**
+- Reset is the highest-value short-lived credential in the system — full account takeover on consumption.
+- 24-hour TTL (the email-verification choice) was right for verification (verifying your own already-accessible email is a low-value target). It is wrong for reset.
+- **Email-prefetch attack surface is real.** Outlook/Office365 and several spam scanners fetch URLs on email receipt; mail-relay logs may capture link contents. A 24h TTL means a compromised relay sees a usable token for 24h. 1h cuts that window 24×.
+- **Industry norms cluster at 1h.** GitHub, Stripe, Auth0 default to 1 hour. Most banks shorten further (15–30 min); we don't go shorter because legitimate users may take longer to read mail on a slow client.
+- Users who exceed 1h re-request. The cost of a fresh request is one more email; the cost of a 24h-window token in a compromised relay is account takeover.
+
+### 2026-04-23 — Task 2.Y: new password may equal current on reset (NOT on change)
+
+**Asymmetric policy, deliberate.** The two password-write endpoints differ on the "new equals current" check:
+
+- `POST /auth/password/change`: REJECTS new == current with 400 `invalid_current_password` (merged with wrong-current per Task 2.X scope decision #2).
+- `POST /auth/reset-password`: ALLOWS new == current. No check.
+
+**Rationale:** the two endpoints prove different things.
+- **Change** is a knowledge-of-current-password flow. The user demonstrably remembers their current password (they typed it in `current_password`). Forcing them to choose a different new password is reasonable: they know what they're avoiding.
+- **Reset** is a knowledge-of-mailbox flow. By definition, the user does NOT remember their current password — that's why they're resetting. Asking them to type something different from a hash they can't produce would be theatre. Internally we'd have to call `verify_password(new, user.hashed_password)`; if the user happens to type their current password (which they don't remember anyway), we'd reject — pointlessly.
+
+**Industry alignment:** GitHub, Google, AWS Cognito do not block "new password matches current" on reset. They DO on change. Same posture.
+
+**Audit trail unaffected:** `auth.password.reset.completed` fires regardless. If the user resets to the same string, it's a noop in security terms but a deliberate event in the audit.
+
+### 2026-04-23 — Task 2.Y: password reset does NOT auto-verify email
+
+**Pinned by `tests/routes/test_password_reset.py::test_18_reset_does_not_change_email_verified_status` with explicit failure-message comment.**
+
+Reset proves mailbox ownership (same mechanism as email verification). The two could be coupled — "if you can reset, you've proven mailbox; therefore mark email as verified." We deliberately do NOT.
+
+**Reasons:**
+- Verification is an affirmative, semantic action separate from reset. A user clicking "I confirm this is my email" is different from a user clicking "let me reset because I'm locked out."
+- Auto-verifying on reset silently changes account state. Silent state changes are surprising — and the test docstring explicitly says: changing this is a policy decision, not a refactor.
+- **Future email-change flows would be complicated.** If the user changes their primary email, reset tokens for the OLD email could end up auto-verifying the NEW one without consent. Cleaner to keep verification an explicit user choice.
+- The cost of NOT auto-verifying is one extra click ("now click the verify link"). Tiny.
+
+**If anyone reverses this in the future:** add an ADR documenting the reasoning, OR a DRIFT-LOG entry with the new design + migration plan for any users affected. Don't quietly swap the behavior.
+
 ### 2026-04-23 — Task 2.X: reuse-detection auto-trigger of user-level revocation deliberately deferred
 
 **Decision at Task 2.X close:** the `user_revoked_before:{user_id}` mechanism shipped, but the `/auth/refresh` reuse-detection path does NOT auto-trigger it. Reuse-detection remains **targeted-jti-only** — only the reused token is revoked; the user's other outstanding tokens stay valid.
