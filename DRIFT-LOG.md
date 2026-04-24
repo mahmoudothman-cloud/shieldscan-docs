@@ -73,6 +73,56 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-21 — Task 2.5: email normalization (latent bug fix)
+
+**Pre-empted by Task 2.5 design review.** Pydantic EmailStr lowercases the domain but leaves the local part case-sensitive (verified: `Alice@Example.COM` → `Alice@example.com` — `Alice` preserved). Without app-layer normalization, register + login were case-sensitive at the local part, enabling:
+
+- Duplicate user creation: `Alice@x.com` and `alice@x.com` hit the `UNIQUE` index as different bytes and both registered successfully.
+- Login lock-out: user registers as `Alice@x.com`, types `alice@x.com` at login, `User.email == req.email` returns 0 rows → 401.
+
+**Three-layer fix (shieldscan-api `d4fdc96`):**
+
+1. `normalize_email()` helper + Pydantic `@field_validator` on every `EmailStr` field at request boundary.
+2. Defensive `.strip().lower()` in `register_identity` for non-HTTP callers (CLI, background jobs).
+3. Alembic rev `b7f2a9c1e8d4`: `CHECK (email = lower(email))` on `users` — catches ORM bypass (raw SQL, SECURITY DEFINER).
+
+Three regression tests cover each layer. No data migration (pre-launch, zero production users).
+
+### 2026-04-21 — Test harness artifact: shared-session aborted-tx visibility
+
+**Bookkeeping entry — not a deviation.** `tests/conftest.py`'s shared `db_session` pattern causes an `IntegrityError` in one client request to abort the outer SQLAlchemy transaction on the shared session. Post-failure `SELECT`s from the same session then see either zero rows OR require a compensating `rollback()` that also unwinds the prior successful request's data.
+
+**Isolated to test observability, not behavior.** Production code paths use a fresh `AsyncSessionLocal()` per request, so aborted-tx state never crosses request boundaries.
+
+**When a test needs to verify state AFTER an expected-failure request**, either:
+- Rely on the HTTP response shape as proof (UserResponse body serializes committed ORM rows; if the body contains the expected email, the row exists), OR
+- Open a fresh `AsyncSession` bound to the test engine (not the shared fixture session) for the verification query.
+
+Encountered during Task 2.5 Commit 1a while building `test_register_rejects_mixed_case_duplicate`. Worked around by asserting the response-body shape instead of a post-register DB query.
+
+### 2026-04-21 — Task 2.5: plan commit-message deviation (SendGrid → ConsoleEmailService)
+
+IMPLEMENTATION-PLAN §2.5 says `feat(auth): add email verification via SendGrid`. Actual commit message: `feat(auth): add email verification consumption endpoints`.
+
+**Why deviated:** M2 envelope item 5 explicitly scopes email to the `ConsoleEmailService` stub for M2; real SMTP (SendGrid or Resend) is deferred to M12.5 (see DRIFT-LOG 2026-04-21 M12.5-prerequisite entry from Task 2.4). Using the plan's literal message would misrepresent what shipped — no SendGrid code exists in the commit.
+
+**Approved:** user, 2026-04-21.
+**Commit:** `b3b7ec0` (shieldscan-api).
+
+### 2026-04-21 — M1 schema tension: `audit_logs.actor_id ON DELETE SET NULL` conflicts with append-only trigger
+
+Encountered during Task 2.5 test development. Deleting a `User` row cascades via `audit_logs.actor_id` (`ON DELETE SET NULL` per M1.5) — which issues an `UPDATE audit_logs SET actor_id = NULL`, which the append-only trigger from M1.6 rejects with `"audit_logs is append-only: UPDATE operations are forbidden"`.
+
+**Net effect:** a User cannot be deleted as long as any `audit_logs` row references them as `actor_id`. Which is every auth event. Which is every User who has ever registered.
+
+**Not a Task 2.5 issue — M1 design tension.** Out of scope for 2.5. Logged for future attention. Candidate resolutions when it becomes a real problem (user-deletion feature, GDPR data purge, admin offboarding):
+
+- Option A: NULL-out `actor_id` via a bypass function (SECURITY DEFINER path that skips the trigger for `actor_id` column only). Clean.
+- Option B: Drop the `ON DELETE SET NULL` and retain `actor_id` as a historical pointer even if the user is gone (no FK). Ugly data model.
+- Option C: Soft-delete users (`deleted_at` column, no row removal). Standard practice for audit-heavy systems.
+
+**Option C is likely the right answer** when we get there. Log in the GDPR-compliance milestone.
+
 ### 2026-04-21 — Task 2.4: intentional breaking change to `/auth/me` response shape
 
 **Pre-launch breaking change, documented for the audit trail.**
