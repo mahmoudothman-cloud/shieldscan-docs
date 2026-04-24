@@ -1161,6 +1161,44 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - The bcrypt 72-byte password-length limit becomes an API-layer concern: the register endpoint (Task 2.2) must explicitly reject passwords >72 bytes with HTTP 400. `hash_password`/`verify_password` do not enforce it.
 - Crypto-agility is preserved — migrating to Argon2id later touches only the two service-layer functions.
 
+### ADR-011: Refresh Token Revocation via Redis jti-Set
+**Status:** Accepted (2026-04-21)
+
+**Context:**
+- JWT tokens are self-contained; once issued, they are cryptographically valid until `exp`. We need a way to invalidate specific tokens *before* `exp` — triggered by logout, password change, suspected compromise, or admin action.
+- Options considered: stateful session store, DB-backed revocation list, Redis-backed revocation list, signed-token-version (global bump).
+
+**Decision:**
+- **Primary mechanism:** Redis `SET revoked_jti:{jti} 1 EX (exp - now)`.
+- Auth path checks `is_revoked(jti)` immediately after signature verification in `get_current_user` (and in `/auth/refresh` for refresh tokens).
+- TTL auto-matches the token's own lifetime — no GC / reaper needed.
+- **Refresh-rotation ordering: revoke OLD jti BEFORE minting NEW tokens.** If the mint fails after a successful revoke, the worst case is the client re-logs-in. If we minted first and then lost the revoke, the client would briefly hold two valid refresh tokens (security issue). Fail-closed.
+- **Deferred — user-level revocation:** on password change / admin revoke-all we will set `user_revoked_before:{user_id}` = now() and compare against the token's `iat` claim. The `iat` hook is already in place (shieldscan-api `4d32fcc`); the consumer endpoint lands with the password-change task.
+
+**Consequences:**
+- Redis becomes a hard dependency of the auth path (cross-ref OPERATIONS-RUNBOOK §11.6).
+- Fail-closed: Redis unreachable → all auth fails → readiness probe returns 503 → LB stops routing. Preferred over "serve with auth broken."
+- O(1) revocation lookup — `EXISTS` on a small key.
+- Revocation-key space grows with revocations but auto-expires with TTL; no unbounded growth.
+- Multi-region deployment requires Redis replication OR per-region revocation (deferred — single-region in M2).
+
+**Reuse-detection behavior (Task 2.3.4):**
+- If a client presents a refresh token whose `jti` is already in the revocation list, we treat it as a **compromise signal** — legitimate clients never replay an already-rotated refresh token.
+- The `/refresh` endpoint audits `auth.token.revoked` with `details={"reason": "reuse_detected", "token_jti": <jti>}` and returns 401.
+- **Full user-level revocation on reuse is deferred** to the password-change endpoint (later M2) which will ship the `user_revoked_before:{user_id}` machinery. Until then, a reuse event invalidates only the reused token, not all of the user's outstanding tokens.
+
+**Alternatives rejected:**
+- **DB-backed revocation list:** auth-path DB hit on every authenticated request. Unacceptable performance ceiling — O(1) Redis is strictly better.
+- **Short-lived tokens only (no refresh revocation):** still need a revocation path for refresh tokens (which are long-lived by design); pushes UX problems onto users (frequent re-login) for no security win.
+- **Signed-token-version (global bump):** cannot revoke individual sessions without revoking every token in circulation. Too coarse.
+
+**Cross-references:**
+- `OPERATIONS-RUNBOOK.md` §11.6 — Redis-hard-dep posture
+- `shieldscan-api` commit `f6b9bbf` — `jti` claim added (revocation hook)
+- `shieldscan-api` commit `4d32fcc` — `iat` claim added (user-level hook)
+- `shieldscan-api` commit `88b6966` — `token_revocation.py` primitive
+- `shieldscan-api` commit `711dfbc` — revocation integrated into `/auth/refresh` + `/auth/logout`
+
 ---
 
 ## 14. Glossary
