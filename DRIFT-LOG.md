@@ -73,6 +73,22 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-21 — M1 latent shadowing bug: `src/app/db.py` unreachable
+
+**Discovered during Sub-task 2.3.4 Commit 2** when `get_db` needed `AsyncSessionLocal`: `src/app/db.py` was shadowed by the `src/app/db/` package (empty `__init__.py` took precedence). The file had been dead since M1 — no imports, no test coverage, no runtime reach. All 107 M1-era tests passed because nothing depended on the orphaned symbols.
+
+**Fix:** consolidated `engine` + `AsyncSessionLocal` into `src/app/db/__init__.py`; deleted `db.py`. No behavior change (nothing previously used the orphan). `shieldscan-api` commit `f0e9d68`.
+
+**Lesson:** *"tests pass" does not imply "all code is reachable."* Type-checkers (mypy) *might* catch this for typed imports, but files that are never imported anywhere are invisible to every tool in the default toolchain.
+
+**Follow-up shipped:** `tests/test_module_reachability.py` (in `shieldscan-api` commit `711dfbc`) — a parametrized test that imports every `src/app/**/*.py` by dotted name. Catches the "shadowed orphan" class of bug immediately on any future occurrence. 31 cases at commit time; auto-grows with the codebase.
+
+### 2026-04-21 — Sub-task 2.3.4: /logout revokes refresh only (not access)
+
+**Policy pin.** `/auth/logout` revokes the refresh token's `jti` but leaves the access token alive until its natural 15-minute expiry. Rationale: revoking both would require the client to supply the access jti in the logout body (it's in the Authorization header, but header values are not body payload), AND an access token surviving 15 minutes after logout is a bounded window that the refresh-token revocation has already closed the door on (no new access tokens can be minted). Clients needing immediate full invalidation use the (forthcoming) password-change endpoint.
+
+Regression guard: `test_logout_does_not_revoke_access_token` in `shieldscan-api` commit `711dfbc`. If someone changes the policy, this test fails loudly and forces the decision to be explicit.
+
 ### 2026-04-21 — Sub-task 2.3.3: slug-collision retry policy
 
 **Decision.** Organization slug collisions during register are handled by retry with an integer suffix: `acme` → `acme-2` → `acme-3` → `acme-4` → `acme-5`. Cap at **5 attempts** (`MAX_SLUG_ATTEMPTS`); on exhaustion the orchestrator raises `SlugGenerationFailed`, which the endpoint layer translates to a generic HTTP 400 (no information leak per M2 envelope item 6a).
