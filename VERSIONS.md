@@ -73,6 +73,7 @@ python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 bcrypt = "^5.0"                # direct bcrypt (not passlib) — see ADR-010
 python-slugify = "^8.0"        # organization slug generation in identity orchestrator
 tldextract = "^5.1"            # PSL-aware root-domain extraction for projects (M3 Task 3.1)
+dnspython = "^2.7"             # async DNS resolver for domain verification (M3 Task 3.2)
 cryptography = "^43.0.0"
 weasyprint = "^62.3"
 jinja2 = "^3.1.4"

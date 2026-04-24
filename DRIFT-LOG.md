@@ -73,6 +73,42 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-23 — Task 3.2: per-domain audit-action enum split
+
+**Refactor.** The single `AuthAction` enum was accreting non-auth values (`EMAIL_VERIFICATION_SENT`, `PASSWORD_RESET_*`, etc.) — adding M3's project events (`PROJECT_CREATED`, `PROJECT_DOMAIN_VERIFIED`, …) would sprawl it further. Split now at the natural M3 boundary (the longer the split is deferred, the more painful it becomes).
+
+**New shape:**
+- `AuthAction` (unchanged — preserves every existing audit-row value).
+- `ProjectAction` (new) for project-domain events.
+- `audit()` widened to accept `AuthAction | ProjectAction`.
+- `ALL_ACTION_ENUMS` registry tuple — single source of truth. Future enums (`ScanAction`, `FindingAction`, etc.) extend by appending.
+
+**Load-bearing invariant:** string values must be globally unique across all action enums. Pinned by `test_action_enum_values_are_globally_disjoint` — verified to fail when given a duplicate value (manual sanity check during commit prep). Plus `test_action_enum_registry_lists_all_known_enums` catches a future engineer adding a new enum but forgetting to register it.
+
+**Back-fill in same commit:** Task 3.1's create/patch/delete handlers shipped without audit (small gap). Closed here so the project-event audit trail is complete from M3 day one.
+
+**Commit:** `shieldscan-api` `b84b7a3`.
+
+### 2026-04-23 — Task 3.2: domain verification ships both DNS TXT + meta tag (plan literal)
+
+**Decision.** `POST /v1/orgs/{org_id}/projects/{id}/verify` supports two methods: `dns_txt` and `meta_tag`. Plan literal IMPLEMENTATION-PLAN.md §3.2 specified both; my pre-task lean was DNS-only; user reversed that lean after weighing three arguments (MENA SMB shared-hosting reality, mitigable spoofing concern, plan-author judgment).
+
+**Two security tightenings layered on top of the plan's literal code:**
+
+1. **`follow_redirects=False`** on the meta-tag fetch. Plan snippet didn't specify either way; without this, an attacker who controls a redirect handler at the customer's `target_url` could redirect us to an attacker page that carries the right meta tag — verification would succeed for a domain the customer doesn't actually control. Pinned by `test_meta_tag_redirect_does_not_follow`.
+
+2. **`html.parser` (stdlib) instead of regex** for meta-tag detection. Plan snippet used a regex (`re.search(r'<meta[^>]+name=...')`) that fails on common HTML variations (single-quoted attrs, attribute-order changes, self-closing tags). Structured parsing handles all four pinned-by-test variants without false negatives. No new dependency — the parser is in the stdlib.
+
+**Failure-mode UX:** the 400 body includes `expected_record` showing the customer the EXACT TXT record / meta tag they need to add. Substantial UX win at zero security cost (the verification_token is already in `ProjectResponse` per Task 3.1 §H decision #2 — it's an org-internal value, not a credential).
+
+**Discrete `failure_reason` codes** for ops differentiation: `dns_nxdomain`, `dns_no_answer`, `dns_timeout`, `dns_token_not_found`, `dns_error`, `meta_tag_not_found`, `meta_tag_token_mismatch`, `http_status_<n>`, `http_timeout`, `http_connect_error`, `html_parse_error`. Customer-facing — leaks DNS state about the customer's OWN domain, which is fine.
+
+**Re-verify failure semantics:** a re-verify whose record has been removed returns 400 but does NOT downgrade `domain_verified` from True to False. DNS is occasionally flaky; one failure must not invalidate historical state. Per Task 3.2 user refinement on decision #3.
+
+**No new ADR** — composition on plan literal with documented tightenings.
+
+**Commit:** `shieldscan-api` `5f74cc5`. Cross-ref `dnspython ^2.7` pinned in VERSIONS.md.
+
 ### 2026-04-23 — Task 3.1: PATCH target_url auto-resets domain verification when root_domain changes
 
 **Decision.** `PATCH /v1/orgs/{org_id}/projects/{id}` with a `target_url` field that produces a different `root_domain` automatically:
