@@ -73,6 +73,34 @@ When addressing an entry:
 
 `tests/conftest.py` recreates the SQLAlchemy async engine + schema per test. Reason: pytest-asyncio **0.24** supports `asyncio_default_fixture_loop_scope` but *not* `asyncio_default_test_loop_scope`, so a session-scoped engine's asyncpg connection gets "attached to a different loop" when touched by a function-scoped test. **How to apply:** when pytest-asyncio bumps to ≥0.25 (currently pinned `^0.24.0` in `pyproject.toml`), re-evaluate session-scoped engines + savepoint rollback — 13 tests in 0.62s is fine now, will matter at 500+ tests.
 
+### 2026-04-23 — Task 2.X: reuse-detection auto-trigger of user-level revocation deliberately deferred
+
+**Decision at Task 2.X close:** the `user_revoked_before:{user_id}` mechanism shipped, but the `/auth/refresh` reuse-detection path does NOT auto-trigger it. Reuse-detection remains **targeted-jti-only** — only the reused token is revoked; the user's other outstanding tokens stay valid.
+
+**Considerations against auto-trigger:**
+- **False positives from network blips:** a client retrying a request after a transient timeout might legitimately replay the same refresh token. Auto-revoking all the user's sessions on every blip-induced retry would be hostile UX.
+- **Observability loss:** once we auto-blow-away all sessions, we lose the per-jti reuse signal that tells us *which* token was replayed. The audit row stays, but the pattern of "this user has had 3 reuse events in 10 minutes" is the kind of intel that would get muddied.
+- **No undo path:** `set_user_revoked_before` is one-shot. If we trigger on a false positive, the user has to log in again on every device. We can't "un-set" the revocation timestamp meaningfully.
+- **Revocation storms:** a buggy client library that mishandles refresh-rotation could create cascading revocation events across all of its users — self-amplifying, hard to diagnose.
+
+**Future ADR required** to revisit. Considerations for that ADR: per-source rate-limiting (only auto-trigger on >N reuses within M minutes), a "soft" revocation that still allows the current valid token to keep working (would need a different mechanism), or sticking with targeted-jti for the foreseeable future.
+
+**Approved:** user, 2026-04-23.
+**Commits:** `shieldscan-api` `07d0189`, `1bb0b66`.
+
+### 2026-04-23 — Task 2.X: no caching layer for `user_revoked_before` reads
+
+**Decision at Task 2.X close:** the auth path's `get_user_revoked_before` Redis GET runs uncached on every authenticated request. Approved short-circuit (Option C) — no further optimization for M2.
+
+**Performance characterization:** Redis GET on a nonexistent key is sub-millisecond and O(1). The 99.9% no-revocation path costs roughly the same as the existing jti-revocation `EXISTS` check we already accepted. The set-revocation path runs once per password-change event (rare).
+
+**If profiling ever shows latency matters,** consider in this order:
+1. **Per-request memoization** — if multiple deps in the same request resolve the auth path, cache the result on the request object. Cheapest, no invalidation surface.
+2. **Pipeline jti+user GETs** — batch `is_revoked` and `get_user_revoked_before` into a single Redis round-trip. Saves the second TCP round-trip; no invalidation issues.
+3. **DO NOT** add a TTL'd in-memory cache behind the DB / pre-Redis layer. Cache invalidation on password change would double the invalidation surface for zero gain — the password-change handler would have to invalidate every API pod's local cache, which is exactly the problem we just solved by going to Redis in the first place.
+
+**Approved:** user, 2026-04-23.
+
 ### 2026-04-21 — Task 2.5: email normalization (latent bug fix)
 
 **Pre-empted by Task 2.5 design review.** Pydantic EmailStr lowercases the domain but leaves the local part case-sensitive (verified: `Alice@Example.COM` → `Alice@example.com` — `Alice` preserved). Without app-layer normalization, register + login were case-sensitive at the local part, enabling:
