@@ -87,6 +87,70 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-26 — Task 3.3: `.zip` dropped from mobile-upload allowed extensions
+
+**Plan deviation.** IMPLEMENTATION-PLAN.md §3.3 lists the allow-list as `{".apk", ".ipa", ".zip"}`. Shipped as `{".apk", ".ipa"}`.
+
+**Three reasons:**
+
+1. **Adversarial input surface.** A `.zip` upload would force content-sniffing (or trust the filename) to decide platform. Either path is fragile — filenames lie, and content-sniffing on attacker-controlled input is a known footgun pattern.
+2. **No clear MVP use case.** APKs and IPAs are themselves ZIP archives; a separate `.zip` extension only matters if customers send arbitrary bundles, which isn't the mobile-scan flow.
+3. **Virus scanning deferred.** Accepting unscanned `.zip` while malware analysis is still scan-time-only (entry below) compounds risk for no MVP benefit.
+
+**Reversibility.** Adding `.zip` back is a one-line change to `ALLOWED_EXTENSIONS` plus a platform-detection rule. Do it if a real workflow demands it; the test pinning `.zip → 400 invalid_extension` (`test_upload_zip_extension_rejected`) is the forcing function for that follow-up.
+
+**Commit:** `shieldscan-api` `d9b0fbf`.
+
+### 2026-04-26 — Task 3.3: error envelope is `{"detail": <code>}`, not `{"error": {"message": ...}}`
+
+**Plan deviation, codebase-consistent.** IMPLEMENTATION-PLAN.md §3.3 test snippets assert `r.json()["error"]["message"]`. Shipped as `{"detail": <code>}` per the codebase-wide `ErrorResponse` standard established in Task 2.3.4.
+
+The plan literal predates 2.3.4's standardization. Reading the plan literally would diverge every Task 3.3 error path from every other endpoint in the codebase — strictly worse than ignoring the literal.
+
+**Pattern for future tasks:** plan literals whose error-shape predates 2.3.4 use `{"detail": ...}` without ceremony. No DRIFT-LOG entry needed per occurrence; this entry establishes the pattern.
+
+**Commit:** `shieldscan-api` `d9b0fbf`.
+
+### 2026-04-26 — Task 3.3: virus / malware scanning deferred to scan-time
+
+**Decision.** The mobile-upload endpoint accepts `.apk` / `.ipa` files as content-addressable blobs. ZIP magic-bytes is the only content check. There is **no virus scanning at upload time**.
+
+Static + dynamic analysis (including malware indicators surfaced by MobSF) happens later in the mobile-scan worker (M5+). The upload endpoint is intentionally **not a security gate** — its job is to land the artifact safely in R2 and trigger downstream scanning.
+
+**Why this is OK at MVP:** R2 storage is private (no public read URLs). Files don't execute on our infrastructure between upload and scan. Customers can only retrieve their own org's uploads. The risk surface is "customer uploads malware their own scanner will flag" — exactly what the product is designed to do.
+
+**Revisit when:** we add public download URLs, when uploads become a customer-facing distribution mechanism, or when free-tier abuse (e.g. uploading malware as a free file-host bypass) shows up.
+
+**Commit:** `shieldscan-api` `d9b0fbf`.
+
+### 2026-04-26 — Task 3.3: `MobileUpload.uploaded_by` changed from NOT NULL to nullable
+
+**Schema correction.** M1 declared `mobile_uploads.uploaded_by` as `NOT NULL` referencing `users.id`. Task 3.3 enables API-key authentication on the upload endpoint per decision #5. API keys belong to an org, not a user — so the `NOT NULL` constraint was unsatisfiable on the API-key path.
+
+**Resolution.** Migration `c8e3d2a4f9b1` drops `NOT NULL`. JWT upload writes `uploaded_by = identity.user.id`; API-key upload writes `uploaded_by = NULL` and surfaces the actor identity via the audit row's `details.api_key_prefix` instead.
+
+**This is correction, not invention.** The audit-logs row already follows this exact pattern: `audit_logs.actor_id` has been nullable for API-key actions since M2 (Task 2.3.2). `mobile_uploads.uploaded_by` deviated from that established convention; this entry brings it back into line.
+
+**API contract:** responses report `uploaded_by_user_id: UUID | None`. UI renders "uploaded via API key" when null. Pinned by `test_upload_via_api_key_writes_null_uploaded_by`.
+
+**Downgrade safety:** the migration's downgrade restores `NOT NULL`. If any rows have `uploaded_by IS NULL` at downgrade time (i.e. an API-key upload landed under this revision), the ALTER fails loudly with `column "uploaded_by" contains null values` — operator must delete or backfill those rows before retrying. Silent data loss is the worse failure mode.
+
+**Commit:** `shieldscan-api` `d9b0fbf`.
+
+### 2026-04-26 — SPECIFICATION.md §6.2 header "Projects (7)" actually enumerates 8 endpoints
+
+**Cosmetic typo, bookkeeping.** The §6.2 header reads "Projects (7)" but the body lists 8 endpoints (CRUD 5 + verify + the future 2 credential endpoints). Surfaced during Task 3.2 review; flagged here to bundle into a future docs cleanup pass rather than touch SPECIFICATION.md inside an unrelated commit.
+
+**Not a 3.3 issue** — included in the 3.3 batch only because the entry batch is the natural place to track docs-bookkeeping items as they're spotted.
+
+### 2026-04-26 — Task 3.3: new dep `python-multipart` 0.0.20
+
+**New runtime dependency.** Added `python-multipart = "^0.0.20"` to `pyproject.toml` for FastAPI's `UploadFile` support — required mechanically by the file-upload endpoint, not a discretionary library choice.
+
+**VERSIONS.md trace:** not yet listed in VERSIONS.md (it's a transitive-style dep that FastAPI doesn't pin itself but requires for multipart/form-data parsing). Add to VERSIONS.md in the next docs cleanup pass; pin range `^0.0.20` is conservative (0.0.x semver discipline).
+
+**Commit:** `shieldscan-api` `d9b0fbf`.
+
 ### 2026-04-23 — Task 3.2: per-domain audit-action enum split
 
 **Refactor.** The single `AuthAction` enum was accreting non-auth values (`EMAIL_VERIFICATION_SENT`, `PASSWORD_RESET_*`, etc.) — adding M3's project events (`PROJECT_CREATED`, `PROJECT_DOMAIN_VERIFIED`, …) would sprawl it further. Split now at the natural M3 boundary (the longer the split is deferred, the more painful it becomes).
