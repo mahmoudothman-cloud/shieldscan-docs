@@ -87,6 +87,81 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.3: route + orchestrator share a single transaction (H.1)
+
+**Pin.** `POST /v1/orgs/{org}/projects/{pid}/scans` flushes the new `Scan` row and passes the same `AsyncSession` to `ScanOrchestrator.dispatch()`. The orchestrator INSERTs ScanJob rows + emits `SCAN_DISPATCHED` audit + COMMITs **one** transaction covering Scan + ScanJobs + audit atomically.
+
+**Failure modes:**
+- Pydantic / domain-verified / mobile-upload validation fails → no DB writes (request rolls back at end).
+- INSERT failures (FK violation, etc.) → entire tx rolls back; customer never sees a Scan with zero ScanJobs.
+- Commit succeeds + Redis dispatch fails → "ghost queued" rows present, no queue entries. Visible-failure mode preferred over silent (DRIFT-LOG Task 4.2 H.3 entry). M5+ retry janitor recovers.
+
+The route deliberately does NOT commit after `dispatch()` returns — orchestrator owns commit per ADR-013.
+
+### 2026-04-30 — Task 4.3: `config` field ships with shape-bounds validation only
+
+**Decision.** `ScanCreateRequest.config` is `dict[str, Any]` with three DoS guards:
+- max **64 KB** serialized (json.dumps length)
+- max depth **5** nested levels
+- max **50** keys at the root
+
+Per-scan-type semantic schemas (discriminated union à la 3.X credentials) deferred until worker-side schemas firm up — likely M5–M6 when Go runners land. Shape-bounds are sufficient for now because workers are first-party (not handling customer-controlled downstream input); the DoS surface is the only real concern at the route boundary.
+
+**Pinned by:** `test_config_oversized_returns_422`, `test_config_too_deep_returns_422`, `test_config_too_many_keys_returns_422`. All three use real `json.dumps`-derived payloads to ensure rejection triggers on serialization, not character-count heuristics.
+
+### 2026-04-30 — Task 4.3: `callback_url` deliberately rejected via `extra="forbid"`
+
+**Decision.** SPEC §6.3 example body carries `callback_url`. Webhook delivery infrastructure (HMAC signing, retry, DLQ) is M12.5+ work. Accept-and-ignore would create a silent "webhook never fires" bug class.
+
+`ScanCreateRequest` has `model_config = ConfigDict(extra="forbid")` — sending `callback_url` (or any other unknown field) returns 422 with a clear message that the field isn't accepted. When M12.5 ships webhook delivery, the field is added explicitly. Loud-rejection > silent-acceptance for this class of feature.
+
+**Pinned by** `test_extra_fields_rejected_422`.
+
+### 2026-04-30 — Task 4.3: `mobile_upload_id: UUID` request shape (deviation from PLAN/SPEC `mobile_config.upload_ref`)
+
+**Plan/SPEC deviation.** IMPLEMENTATION-PLAN.md §4.3 + SPECIFICATION.md §6.3 example bodies carry `mobile_config: {upload_ref: "r2://..."}` — the request body would force API consumers to construct/parse `r2://` URIs.
+
+Shipped instead: `mobile_upload_id: UUID` referencing the `mobile_uploads.id` PK directly. The `r2://` URI representation is internal — built by `orchestrator._build_job_payload` from the `MobileUpload` row's `r2_key` column. Cleaner client API, no internal-detail leakage.
+
+**Implementation note:** the route validates the `mobile_upload_id` exists, belongs to the same org (404 on cross-tenant — existence-hiding), and isn't soft-deleted (`deleted_at IS NULL`) BEFORE creating the Scan row. Pinned by `test_mobile_upload_from_different_org_returns_404` + `test_mobile_scan_without_upload_id_returns_422`.
+
+### 2026-04-30 — Task 4.3: orchestrator commits the session — caller MUST NOT commit again (explicit pin)
+
+**Pin (re-stating Task 4.2's contract for clarity at the first caller).** `ScanOrchestrator.dispatch()` commits the session passed to it. The 4.3 route handler:
+
+1. Validates request + flushes a new `Scan` row (no commit).
+2. Eager-attaches `scan.project = project` in memory.
+3. Calls `await orchestrator.dispatch(scan, identity, ...)` — orchestrator commits.
+4. Returns 201 directly from the in-memory ORM objects (post-commit, no `select_fresh` needed).
+
+**Asymmetric** with `audit()` (never commits) and the credentials handler (route commits). Verified the orchestrator docstring is explicit. Future endpoints calling `dispatch()` should follow the same caller-flushes-orchestrator-commits pattern.
+
+### 2026-04-30 — Pattern: long-lived background tasks need `session_factory` DI
+
+**Carry-forward from Task 4.2 (asyncpg pool race).** `CompletionsConsumer` opens fresh `AsyncSession` instances per event. Production binds the `session_factory` parameter to the global `AsyncSessionLocal`. **Tests must inject a factory bound to the test fixture's connection** — the global `AsyncSessionLocal` is bound to the engine's first event loop, which becomes stale across pytest-asyncio's per-test loop cycle, surfacing as `asyncpg.InterfaceError: cannot perform operation: another operation is in progress`.
+
+Test pattern (from `tests/services/test_completions_consumer.py`):
+
+```python
+@pytest_asyncio.fixture
+async def session_factory(db_session):
+    """Bind each "fresh" session to the test's connection — same RLS
+    context, no cross-loop pool contention."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _S
+    connection = db_session.bind
+
+    class _Factory:
+        async def __aenter__(self):
+            self._session = _S(bind=connection, expire_on_commit=False)
+            return self._session
+        async def __aexit__(self, *exc):
+            await self._session.close()
+
+    return lambda: _Factory()
+```
+
+**Pattern reusable for any future long-lived background task** (M5 worker dispatch listeners, scheduled scan jobs, the M5+ ghost-queued retry janitor). DEVELOPMENT-PATTERNS.md gets a dedicated section in this docs commit.
+
 ### 2026-04-30 — Task 4.2: Python is sole writer for scan state (ADR-013)
 
 **ADR-013 ships.** Captures the state-machine ownership decision: Python writes; Go signals via Redis. The companion `CompletionsConsumer` consumes `shieldscan:completions` Pub/Sub events and applies them to `scan_jobs`/`scans` rows.

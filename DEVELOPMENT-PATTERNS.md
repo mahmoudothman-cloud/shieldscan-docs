@@ -65,3 +65,104 @@ First discovered: **Task 3.X PATCH /credentials** — a second PATCH on the same
 
 Pinned by: [`tests/test_select_fresh.py`](../shieldscan-api/tests/test_select_fresh.py) — uses raw-SQL UPDATE to make DB state diverge from cached state, then asserts plain SELECT returns the stale row and `select_fresh` returns the fresh one.
 
+
+---
+
+## Long-lived Background Tasks: `session_factory` DI
+
+### Context
+
+Some components run as long-lived `asyncio` tasks rather than per-request handlers — the M4 `CompletionsConsumer` is the first; M5 worker dispatch listeners and the M5+ ghost-queued-scan retry janitor will follow. They open a new `AsyncSession` per event (or per work-cycle) rather than receiving one from FastAPI's request-scoped DI.
+
+In production this is straightforward: the component takes a `session_factory` parameter and is constructed with the global `AsyncSessionLocal`. Each event opens a fresh session from the engine's pool, sets RLS context (`SET app.current_org_id`), does its work, commits, closes.
+
+### The trap
+
+In tests, reaching for the global `AsyncSessionLocal` fails — but in a confusing way.
+
+`AsyncSessionLocal` (in [`src/app/db/__init__.py`](../shieldscan-api/src/app/db/__init__.py)) is constructed at module-import time from a global `engine`. The engine binds to the first event loop that uses it. With pytest-asyncio's per-test event-loop scoping (necessary for the function-scoped `db_session` fixture to avoid "attached to a different loop" asyncpg errors — see CLAUDE.md gotcha 3 + the conftest comment), the second test that touches `AsyncSessionLocal` finds an engine bound to a stale loop. The asyncpg connection then races against the previous test's leftover state and raises:
+
+```
+asyncpg.exceptions._base.InterfaceError:
+    cannot perform operation: another operation is in progress
+```
+
+The error message is misleading — there's no concurrent operation in your code; it's the connection-pool/loop mismatch surfacing as if there were one.
+
+### The fix
+
+Inject a `session_factory` rather than reaching for the module-global. Production binds to `AsyncSessionLocal` directly. Tests bind to a factory that yields sessions on the test fixture's existing connection.
+
+**Production wiring** (FastAPI `lifespan` in `main.py`):
+
+```python
+from app.db import AsyncSessionLocal
+consumer = CompletionsConsumer(session_factory=AsyncSessionLocal, redis=redis)
+await consumer.start()
+```
+
+**Test wiring** (pytest fixture):
+
+```python
+@pytest_asyncio.fixture
+async def session_factory(db_session):
+    """Each "fresh" session shares db_session's connection.
+    Same RLS context (SET ROLE shieldscan_app + GUC), same event
+    loop, no pool contention."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _S
+    connection = db_session.bind  # AsyncConnection bound to test fixture
+
+    class _Factory:
+        async def __aenter__(self):
+            self._session = _S(bind=connection, expire_on_commit=False)
+            return self._session
+
+        async def __aexit__(self, *exc):
+            await self._session.close()
+            # Don't close the connection — db_session owns its lifecycle.
+
+    return lambda: _Factory()
+```
+
+The test's "fresh" sessions all share the test connection. That's semantically equivalent to production for unit-test purposes:
+- RLS context survives (the connection has `SET ROLE` + `SET app.current_org_id` once; subsequent sessions inherit).
+- Committed visibility is consistent (same connection, no cross-connection isolation surprise).
+- `expire_on_commit=False` matches `AsyncSessionLocal`'s configuration.
+
+### When to reach for it
+
+Anywhere a component has this shape:
+
+```python
+class SomeBackgroundTask:
+    def __init__(self, session_factory, redis):
+        self._session_factory = session_factory
+        ...
+    async def _handle(self, event):
+        async with self._session_factory() as db:
+            ...  # per-event work
+```
+
+Don't write `async with AsyncSessionLocal() as db:` inline — even though it's tempting. Tests will pay for it.
+
+### Bonus: non-request RLS context
+
+The same component pattern raises a second concern: there's no incoming auth, no `require_org_membership` upstream, no GUC pre-set. Each event must SET its own `app.current_org_id` from a trusted field on the consumed event:
+
+```python
+async def _handle(self, event: dict) -> None:
+    async with self._session_factory() as db:
+        await db.execute(
+            text(f"SET app.current_org_id = '{event['organization_id']}'")
+        )
+        # ... RLS-scoped queries follow
+```
+
+The org_id comes from the event's payload. The Go worker is the only legitimate emitter, but the channel could in principle be spoofed by anyone with Redis write access. Defense-in-depth posture: Redis runs inside our trust boundary (private VPC). Future hardening might HMAC-sign completion events at the Go side and verify in the consumer. Track that as ops-hardening-milestone work.
+
+### Provenance
+
+First discovered: **Task 4.2 `CompletionsConsumer`** ([`shieldscan-api` commit `cf3b30a`](#)). The asyncpg "another operation in progress" error surfaced when the second test in the file ran against the global engine. Fix in the test fixture; production code unchanged.
+
+Pinned by: tests in [`tests/services/test_completions_consumer.py`](../shieldscan-api/tests/services/test_completions_consumer.py) all consume the `session_factory` fixture rather than the global `AsyncSessionLocal`.
+
