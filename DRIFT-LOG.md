@@ -87,6 +87,90 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 3.X: AuthType enum lifted from M1 inline comment
+
+**Refactor.** M1's `ProjectCredential.auth_type` carried only an inline comment (`# cookie | bearer | basic | form | custom_header`) describing legal values. Task 3.X needs the value set programmatically (Pydantic discriminated union, route-handler dispatch), so the comment is lifted into a proper `AuthType(str, PyEnum)` in `app/services/credentials.py`.
+
+**Five canonical values** (frozen): `basic`, `bearer`, `cookie`, `form`, `custom_header`. Pinned by `CANONICAL_AUTH_TYPES` constant in the service module + the schema's `Literal[...]` discriminators. Adding a new value requires updating both surfaces and the test that asserts the canonical set.
+
+**Disjointness from action enums:** `AuthType` is in a different namespace from `AuthAction`/`ProjectAction` — not registered in `ALL_ACTION_ENUMS`. Action enums encode audit events; `AuthType` encodes credential payload shape. Kept separate to avoid a cross-domain registry that would invite future confusion.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: PATCH + DELETE for credentials (vs single PATCH with `none` sentinel)
+
+**Decision.** Two endpoints — `PATCH /credentials` (set/replace) + `DELETE /credentials` (clear) — instead of a single PATCH with `auth_type: "none"` clearing semantics.
+
+**Rationale:** Verb discipline matches the rest of the codebase (DELETE on `/projects`, DELETE on `/api-keys`); cleaner audit boundary (`PROJECT_CREDENTIAL_SET` vs `PROJECT_CREDENTIAL_DELETED` cannot collide); no awkward `"none"` sentinel that would require a sixth schema variant carrying nothing. Trade-off accepted: one extra route, ~30 LoC and one extra test (`test_delete_credentials_204_and_audit`).
+
+**DELETE idempotency:** calling DELETE on a project with no credential is a no-op 204 with no audit row. Audit rows fire only for events that actually happened.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: form-auth credential exposes five fields; `additional_fields` deferred
+
+**Decision.** The `form` credential variant accepts exactly: `login_url`, `username_field`, `password_field`, `username`, `password`. No `additional_fields` map for arbitrary form inputs.
+
+**Known limitation.** Real-world login forms sometimes carry hidden CSRF tokens, captcha challenges, or arbitrary submitted-state fields. The MVP form-credential ships without that flexibility — a customer whose login form needs an extra hidden field cannot configure it through this endpoint today.
+
+**Why ship the limited shape now:** the five-field set covers the MENA SMB common case (per market research feeding milestone planning). Adding `additional_fields` later is an additive Pydantic change (no schema-level breaking change for existing clients). Until a paying customer hits this limit we defer the complexity.
+
+**Forcing function:** `test_patch_form_happy_path` asserts the exact field set; adding a sixth field will require updating that test, surfacing the contract change to review.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: PATCH/DELETE on archived project → 409 Conflict
+
+**Decision.** Both PATCH and DELETE on `/credentials` return 409 `project_archived` when the parent project is archived (`archived_at IS NOT NULL`). Symmetric on the two endpoints.
+
+**Why 409, not 410:** 410 already means *"this resource is in the deleted state"* (used by `DELETE /projects` on already-archived). 409 = *"the operation conflicts with the resource's current state"* — credentials are not themselves deleted/archived; the project's state simply forbids credential mutation. Distinct semantics, distinct status codes.
+
+**Why a hard error, not silent-allow:** archived projects shouldn't accept new state. Allowing credential mutation on archived projects creates a silent-data-leak path (re-activate an archived project with stale credentials the customer thought were cleared). Hard 409 forces the customer to un-archive first.
+
+**Pinned by** `test_patch_archived_project_returns_409` + `test_delete_archived_project_returns_409`.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: single-key Fernet for MVP; multi-key `MultiFernet` rotation deferred to OPS milestone
+
+**Carry-forward.** SPEC §10.1 promises *"key rotation support for encryption keys."* Task 3.X ships single-key Fernet only (`Fernet(settings.FERNET_KEY)`), no `MultiFernet` rotation primitive.
+
+**Why MVP is sufficient:** zero production credentials exist pre-launch. Key rotation is a pre-launch checklist item: generate fresh key, re-encrypt seed credentials (none yet), update settings.
+
+**OPS-milestone scope:** `MultiFernet` with primary + retiring keys, a re-encryption job that walks `project_credentials` rolling rows from old → new key, ops runbook entry for the rotation procedure. Tracking cost: ~1 day in OPS milestone.
+
+**No SPEC update needed** — §10.1 isn't wrong, just early. The promise stands; this entry pins when it's delivered.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: Vault-stored secrets deferred from SPEC §10.1 to OPS milestone
+
+**Carry-forward.** SPEC §10.1 says *"All secrets in Vault (not env vars in production)."* Task 3.X reads `FERNET_KEY` from `settings` (which loads from env) — Vault integration is OPS-milestone work.
+
+**Pre-launch posture:** env-var secrets are acceptable when (a) the env file is `chmod 600` on the host, (b) no shared infra, (c) operational discipline of not committing the file. All true for MVP.
+
+**Vault scope when it lands:** `app/config.py` swap from env to a Vault-backed loader, secret-rotation hooks tied to deployment, audit trail for secret reads. Substantial enough to be its own milestone task, not a 3.X gap-closer.
+
+### 2026-04-30 — Task 3.X: FERNET_KEY conftest fixture corrected
+
+**Bookkeeping.** The previous fixture in `tests/conftest.py` used the literal string `"test-fernet-key-base64-urlsafe-44-bytes="`, which is NOT a valid Fernet key (not 32 bytes of urlsafe-base64). The malformed key never crashed because no test instantiated Fernet — Task 3.X is the first code path to do so.
+
+**Fix:** replaced with `"c2hpZWxkc2Nhbi10ZXN0LWZlcm5ldC1rZXktMzJieSE="` — valid, deterministic, base64 encoding of `b"shieldscan-test-fernet-key-32by!"`. Determinism matters because Test 14 asserts byte-level plaintext absence in the encrypted blob.
+
+**Forcing function:** `test_fernet_key_in_settings_is_valid_at_import` instantiates Fernet at import time. Future broken keys fail at test collection, not mid-run.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
+### 2026-04-30 — Task 3.X: `project_credentials.project_id` UNIQUE constraint added (M1 schema correction)
+
+**Schema correction.** M1 schema declared `project_credentials` with a non-unique `project_id` index. Task 3.X's PATCH semantics require exactly one credential per project — without UNIQUE, the application could (under a SELECT-then-INSERT race) end up with two credential rows for one project.
+
+**Resolution.** Migration `d4f6b1e9a527` adds `UNIQUE (project_id)` constraint. Application-layer enforcement uses PostgreSQL UPSERT (`INSERT ... ON CONFLICT (project_id) DO UPDATE`) for atomicity, with the new constraint as the conflict target.
+
+**Downgrade safety:** dropping the constraint is harmless. Upgrading on a dev DB with duplicate `project_id` rows fails loudly (unique-violation) — operator dedupes manually. No data migration needed pre-launch.
+
+**Commit:** `shieldscan-api` `c7a12e9`.
+
 ### 2026-04-26 — Task 3.3: `.zip` dropped from mobile-upload allowed extensions
 
 **Plan deviation.** IMPLEMENTATION-PLAN.md §3.3 lists the allow-list as `{".apk", ".ipa", ".zip"}`. Shipped as `{".apk", ".ipa"}`.
