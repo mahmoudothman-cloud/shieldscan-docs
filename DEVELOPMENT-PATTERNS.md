@@ -166,3 +166,77 @@ First discovered: **Task 4.2 `CompletionsConsumer`** ([`shieldscan-api` commit `
 
 Pinned by: tests in [`tests/services/test_completions_consumer.py`](../shieldscan-api/tests/services/test_completions_consumer.py) all consume the `session_factory` fixture rather than the global `AsyncSessionLocal`.
 
+
+---
+
+## API-key Audit Attribution
+
+### Context
+
+Audit rows track *who* did *what* via `audit_logs.actor_id` (FK to `users`). The original M2 design assumed a 1-to-1 between authenticated requests and a user identity — JWT auth carries a `sub` claim that resolves to a user, populates `actor_id`, done.
+
+**API-key auth breaks that assumption.** API keys belong to an organization, not a user (per ADR-012 + the M3 mobile upload schema correction). The credential authenticates the request as the org but doesn't identify a specific human actor.
+
+### The pattern
+
+When emitting an audit row from an endpoint that accepts both JWT and API-key auth (via `require_org_membership()`), populate `actor_id` only on the JWT path. On the API-key path, leave it `None` and surface the calling key's prefix in the audit `details` payload:
+
+```python
+actor_id = identity.user.id if identity.user is not None else None
+details: dict = {
+    "scan_type": scan.scan_type.value,
+    # ... domain-specific fields
+}
+if identity.api_key is not None:
+    details["api_key_prefix"] = identity.api_key.key_prefix
+
+await audit(
+    db,
+    organization_id=org_id,
+    actor_id=actor_id,
+    action=ScanAction.SCAN_DISPATCHED,
+    resource_type="scan",
+    resource_id=scan.id,
+    ip_address=get_real_ip(request),
+    user_agent=request.headers.get("User-Agent"),
+    details=details,
+)
+```
+
+### Why `key_prefix` and not a full key reference
+
+The first 12 characters of an API key (e.g. `ss_live_abcd`) are intentionally non-secret — surfaced in the API key list view, used by customer support to identify which key a customer is asking about. They're long enough to be useful for identification (a customer with 3 keys can tell which one fired) but short enough that they don't leak the secret tail.
+
+A full FK to `api_keys.id` would also work but couples the audit log to the api_keys table — when a key is revoked + GC'd, the audit row's reference would either dangle or auto-NULL. Storing the prefix as a string keeps the audit row self-contained and human-readable in ops review without joins.
+
+### Why `actor_id IS NULL` instead of a synthetic system user
+
+An alternative design would seed an `api_key_user` row in `users` and point `actor_id` there for API-key audits. Rejected because:
+
+- It conflates "no user actor" with "this synthetic actor" — ops review would have to know the synthetic user is special.
+- The synthetic user can't be deleted (it's referenced by audit rows), creating a permanent special case in the users table.
+- `audit_logs.actor_id` was `nullable=True` from M2 specifically for this case.
+
+`NULL + details.api_key_prefix` is the cleaner shape: the audit row says exactly what's true. No human triggered this; this API key did.
+
+### When to reach for it
+
+Any endpoint whose auth dep is `require_org_membership()` (the default factory — JWT or API key) and that emits an audit row. Currently four implementations:
+
+- Task 3.3 — `POST /mobile-uploads`
+- Task 3.X — `PATCH /credentials` + `DELETE /credentials`
+- Task 4.5 — `DELETE /scans/:id` (cancel)
+- Task 4.6 — `POST /scans/compare`
+
+The pattern is also baked into Task 4.2's `ScanOrchestrator.dispatch()` (which receives an `AuthIdentity` and emits `SCAN_DISPATCHED` directly) — the orchestrator is just the first non-route surface that encountered it.
+
+### What does NOT belong in `details`
+
+- The full API key plaintext or hash. Plain leaks the credential; hash provides no operational benefit and couples the audit log to the api_keys table's SHA strategy.
+- The IP / user-agent. Those have dedicated top-level columns on `audit_logs` (INET + Text respectively, indexable for CIDR queries). Putting them in JSONB defeats the indexing.
+- Domain-secret content. Audit details for a credential write should never include the credential value (Task 3.X pinned this with the response-doesn't-return-decrypted regression test).
+
+### Provenance
+
+First implementation: **Task 3.3** ([`shieldscan-api` commit `d9b0fbf`](#)) — mobile upload via API key. Re-applied in 3.X, 4.5, 4.6. Triple-pin precedent established; promoted from per-task convention to documented pattern at Task 4.6.
+

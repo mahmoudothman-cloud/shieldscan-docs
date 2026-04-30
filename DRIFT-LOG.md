@@ -87,6 +87,49 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.6: cross-project comparison rejected (409 scans_project_mismatch)
+
+**Decision.** Compare endpoint requires both scans to belong to the same project. Cross-project comparison (project A baseline vs project B current) is conceptually valid for orgs running the same codebase across multiple environments (staging/prod), but at MVP it's a niche use case that complicates the contract.
+
+**409 `scans_project_mismatch`** when `baseline.project_id != current.project_id` (both org-scoped, both visible — semantic conflict, not existence-hiding). Rejecting now keeps the contract narrow; **removing later is an additive change** — drop the guard, document the new behavior. The forcing function (`test_compare_cross_project_returns_409`) is symmetric: the guard's removal would be a deliberate decision, not an accident.
+
+### 2026-04-30 — Task 4.6: non-terminal scan handling — 409 scan_not_terminal for FAILED + CANCELED + active states
+
+**Decision.** Compare endpoint requires both scans in `{COMPLETED, PARTIAL}` state. `FAILED`, `CANCELED`, and active states (`QUEUED`, `RECONNING`, `RUNNING`, `ANALYZING`) all return 409 `scan_not_terminal`.
+
+**Failure mode prevented:** comparing against a non-terminal-final scan reports fake "resolved" findings — vulnerabilities that simply weren't discovered yet (or were aborted), not actually resolved. A customer running a regression check would see "12 vulnerabilities resolved!" when nothing was resolved — the new scan just hasn't found them yet.
+
+**`PARTIAL` is the right boundary:** some jobs ran successfully, providing meaningful baseline data even if not all jobs completed. `FAILED` (whole-scan failure, no useful data) and `CANCELED` (user-aborted, incomplete by definition) are explicitly rejected.
+
+**Pinned by** `test_compare_non_terminal_scan_returns_409` (active state) + `test_compare_canceled_scan_returns_409` (explicit CANCELED pin).
+
+### 2026-04-30 — Task 4.6: response size cap with truncated flag + logger.warning
+
+**Decision.** Each diff category capped at `MAX_FINDINGS_PER_CATEGORY = 5000` (in `services/scan_compare.py`). When any category hits the cap, `summary.truncated: true` flag fires + the route handler emits `logger.warning("scan_compare hit category cap of 5000 ...")`.
+
+**Why a logger.warning, not an error:** the cap is by design, not a bug. The warning is an **operational signal for capacity planning** — if it fires regularly, raise the cap or ship pagination earlier than M10. Greppable log line for ops dashboards.
+
+**At ~300 bytes/entry × 5000 × 3 categories** ≈ **4.5 MB max response.** Hardly common at MVP scale (typical scans have 10–500 findings). Pagination → M10 read-side cluster, where it can be designed alongside `GET /vulnerabilities` and friends rather than retrofit per-endpoint.
+
+### 2026-04-30 — Task 4.6: read-only fingerprint algorithm — M9 pipeline populates, 4.6 reads
+
+**Pin.** `Vulnerability.fingerprint` column is canonical (CLAUDE.md gotcha 4):
+```
+SHA-256(tool_name|finding_type|target_url|parameter|code_file|code_line)
+```
+
+**M9 AI pipeline computes and populates the column** for each deduplicated finding. **4.6 only READS** — no schema changes, no algorithm definitions in the compare service. `compute_diff` partitions by reading `fingerprint` directly off `Vulnerability` rows.
+
+**Defensive on duplicates within one scan:** `setdefault` in the partition logic means accidentally-duplicated fingerprints (shouldn't happen post-M9 dedup but defensive) yield first-write-wins, not a crash.
+
+### 2026-04-30 — Task 4.6: "changed" category deferred (severity/details delta on persisting findings)
+
+**Carry-forward.** A vulnerability whose fingerprint matches across scans but whose `severity` or `description` shifted (e.g., CVE was rescored) is currently in the **persisting** bucket. A future "changed" sub-category could surface these to draw customer attention to severity drift.
+
+**Why defer:** fingerprint match is the strong "same vulnerability" signal. Severity/title drift is softer. Modeling the second cleanly requires (a) a canonical comparison shape — which fields' delta is meaningful? (b) UI work to surface a distinct bucket, (c) customer feedback on whether the granularity is useful. None in scope for 4.6's MVP.
+
+**Promotion criterion:** ship "changed" if a paying customer asks for severity-drift surfacing or if M9 AI pipeline adds reliable severity-shift signals.
+
 ### 2026-04-30 — Task 4.5: cancel-wins at scan-level (reversal of M4 landscape framing)
 
 **Reversal + clarification.** The M4 landscape pass said *"completion wins, cancel becomes a no-op"* for cancel-vs-completion races. That framing conflated two different races:
