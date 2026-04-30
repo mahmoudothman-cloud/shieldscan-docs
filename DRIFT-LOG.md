@@ -95,7 +95,7 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **Forcing function:** `test_subscriber_replay_returns_history` requires `XRANGE` semantics. Test docstring explicitly references ADR-014 so a future "simplification" reverting to Pub/Sub fails immediately with a self-documenting message.
 
-**Commit:** `shieldscan-api` `349fc5e` (api), `shieldscan-docs` `<TASK4.1_DOCS_COMMIT>` (ADR + SPEC patch).
+**Commit:** `shieldscan-api` `349fc5e` (api), `shieldscan-docs` `60d71f8` (ADR + SPEC patch).
 
 ### 2026-04-30 — Task 4.1: SPEC §7.2 wording patched (Channel → Stream)
 
