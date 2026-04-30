@@ -87,6 +87,101 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.4: SSE generator extracted to module-level function for testability
+
+**Implementation pivot.** The SSE handler's event generator was originally inline as a closure inside `stream_scan_progress`. End-to-end SSE testing through `httpx.AsyncClient.stream()` + `ASGITransport` + `sse-starlette.EventSourceResponse` hangs on `aiter_lines()` — known integration weakness where streaming chunks buffer indefinitely until the response generator completes (which an SSE generator never does).
+
+**Fix:** extract `progress_generator(redis, scan_id_str, last_event_id)` as a module-level async function. The route handler wraps it with instrumentation (connect/disconnect INFO logs) and `EventSourceResponse(..., ping=15)`. Tests drive `progress_generator` directly via `async for` iteration on fakeredis; HTTP-level tests cover only the connect-time auth/404 paths.
+
+**Test split:**
+- 4 HTTP-level tests (status codes only — no body iteration): unauthenticated 401, cross-tenant 404, nonexistent 404, `_parse_last_event_id` parser pin.
+- 8 generator-level tests (full event-flow contract): live delivery, multiple events in order, concurrent readers, `Last-Event-ID` skip-history, replay-since-id, replay-then-live seamless, format compliance, terminal-scan replay.
+
+**Why this is the right shape:** the SSE-over-test-client hang is a transport-level integration artifact, not a behavior bug. The behavior under test is the event-flow logic in `progress_generator`. Testing it directly is more accurate AND more reliable than fighting the transport. Future SSE-equivalent endpoints (M5+ live worker logs, etc.) should follow the same extract-and-test-directly pattern.
+
+**Pinned by:** all 12 tests in `tests/routes/test_scan_progress.py`.
+
+### 2026-04-30 — Task 4.4: DB session held for SSE connection lifetime (Option B deferred)
+
+**Decision (deferred Option B).** Initial scope-proposal called for closing the request-scoped DB session after the scan-existence lookup, freeing the connection-pool slot for the streaming phase. **Implementation reverted** to holding the session open for the connection's lifetime via FastAPI's standard `Depends(get_db)` teardown.
+
+**Why reverted:** explicit `await db.close()` in the handler interferes with the test fixture's persistent-connection model. The test's `db_session` shares one `AsyncConnection` with the route handler; closing it mid-test orphans subsequent assertions on `db_session`. The fix would be to refactor the test fixture to use independent per-request connections (closer to production), which is non-trivial and out of scope for 4.4.
+
+**Production impact:** at MVP viewer counts (<20 concurrent SSE viewers per uvicorn worker), connection-pool exhaustion is not a concern. At larger scale, the right fix is a per-request session checkout pattern that the SSE handler explicitly releases — that's an ops-milestone refactor when the test fixture's persistent-connection assumption is also addressed.
+
+**Pinned by inline comment** at the SSE handler's "Step 3" block, explicitly calling out the deferred optimization + the test-fixture interaction. Future engineer reading the code will see why `await db.close()` is NOT called.
+
+### 2026-04-30 — Task 4.4: SSE block_ms = 200ms (vs proposal's 10s)
+
+**Tuning refinement.** The scope proposal pinned `_SSE_BLOCK_MS = 10_000` (10s). Implementation reduced to `200ms` because:
+
+- 10s blocks made test-side assertions wait up to 10s for disconnect-detection cycles, blowing test timeouts.
+- 200ms = 5 iterations/sec. Loop body is empty when no events arrive — CPU cost negligible.
+- Production responsiveness improves: client disconnect detection at 200ms granularity instead of 10s.
+- Heartbeat (15s) still protects against proxy idle-timeouts; block_ms is the inner-loop iteration interval, not the heartbeat.
+
+**Trade-off:** ~4.5x more redis round-trips per second per active SSE connection vs the 10s proposal. At MVP viewer counts (<20), redis can handle thousands of XREAD/sec trivially. Revisit only if profiling shows fakeredis-style XREAD looping is hot in production (it won't be).
+
+### 2026-04-30 — Task 4.4: Pub/Sub → Streams reversal in plan §4.4
+
+**Plan deviation.** `IMPLEMENTATION-PLAN.md` §4.4 sketched a Pub/Sub-based progress streaming design (`redis_client.pubsub() + pubsub.listen()`). ADR-014 (Task 4.1) reversed that decision; Task 4.4 implementation uses the `ProgressSubscriber` wrapper from `app.services.scan_queue` (Streams via XADD/XRANGE/XREAD BLOCK).
+
+**Plan §4.4 code snippet should be ignored.** The `routes/scan_progress.py` filename in plan §4.4 was also superseded — handler lives in `routes/scans.py` on the `scan_router` (Task 4.5 router-split precedent), colocated with cancel + compare.
+
+**SPEC §7.2** was patched in ADR-014's docs commit (Channel → Stream wording).
+
+### 2026-04-30 — Task 4.4: no audit on SSE connect; INFO logs instead
+
+**Pin.** `GET /scans/:id/progress` is read-only. Following the pattern that M10 GET endpoints will inherit: read-only operations don't audit. Every dashboard refresh would emit a `SCAN_PROGRESS_VIEWED` audit row → noise that drowns security-relevant events.
+
+**Operational visibility via INFO logs:**
+
+```python
+logger.info("sse_progress_connected scan_id=%s identity_kind=%s last_event_id=%s", ...)
+# ... (connection lifetime)
+logger.info("sse_progress_disconnected scan_id=%s duration_seconds=%.1f events_sent=%d", ...)
+```
+
+Greppable from app logs for "is SSE being used? are clients reconnecting often? are connections being held too long?" without polluting `audit_logs`. Audit log stays clean for security/compliance focus.
+
+### 2026-04-30 — Task 4.4: Last-Event-ID graceful degradation (malformed → "$")
+
+**Decision.** `_parse_last_event_id` accepts:
+- Empty/None → `"$"` (live-only)
+- `"-"` → replay all from beginning (test/debug clients)
+- Well-formed `<ms>-<seq>` Redis Stream id → echoed (replay since)
+- **Malformed → degrade gracefully to `"$"`**
+
+**Why graceful degradation:** rejecting malformed ids with 400 is correct HTTP semantic but breaks reconnect-recovery for clients with stale state. A browser that crashed mid-stream may have a corrupted `Last-Event-ID` cookie; we'd rather they get the live-events-only fallback than a hard error.
+
+**Pinned by** `test_parse_last_event_id_handles_all_cases` — covers empty, whitespace-only, malformed, well-formed, and the special `-` value.
+
+### M4 milestone-boundary close (2026-04-30)
+
+**M4 — Scan Orchestration & Redis Contracts — closes after Task 4.4.**
+
+| Item | Detail |
+|---|---|
+| Tasks shipped | 4.1 Redis primitives · 4.2 Orchestrator + completions consumer · 4.3 POST /scans · 4.5 DELETE cancel · 4.6 POST compare · 4.4 SSE progress |
+| Task ordering followed | 4.1 → 4.2 → 4.3 → 4.5 → 4.6 → 4.4 (deferred 4.4 to last per its known SSE testing complexity) |
+| API commits | 6 (one per task) |
+| Docs commits | 7 (one per task + the ADR-013/014 inline updates) |
+| Test count | 416 (M3 close) → 506 (M4 close) — +90 net new tests |
+| Per-task test growth | 4.1: 12 · 4.2: 14 · 4.3: 19 · 4.5: 12 · 4.6: 13 · 4.4: 12 = 82 + 8 module-reachability auto-pickups |
+| Migrations | 0 (M4 is read-mostly + Redis primitives; no schema changes) |
+| ADRs added | ADR-013 (Python sole writer for scan state) · ADR-014 (Streams over Pub/Sub for progress) |
+| ADRs reserved | ADR-015 (decrypted credentials in Redis) — defer until enabled M5+ |
+| DEVELOPMENT-PATTERNS.md sections added | 2 — `session_factory` DI for long-lived background tasks (4.2) · API-key audit attribution (4.6, triple-pin promotion) |
+| §6.2 endpoints status | 5 of 7 scans-domain endpoints shipped (POST, DELETE cancel, GET progress, POST compare, + 4.6's compare). The other 2 (GET single, GET jobs) **deferred to M10** read-side cluster per Task 4.1's batched DRIFT-LOG decision. |
+| Carry-forwards to M5+ | Worker-side cancel consumption (4.5) · "Ghost queued" retry janitor (4.2 commit-then-dispatch) · ADR-015 (auth-block decryption in Redis transit) · Stream-key cleanup TTL (4.1 ops carry-forward) |
+| Carry-forwards to OPS milestone | Per-request DB session checkout for SSE (4.4 deferred Option B) · SSE per-org/per-scan connection limits · Server-side SSE timeout · HMAC-signed completion events |
+| Carry-forwards to M10 | Pagination for read-side endpoints (referenced from 4.6's truncation cap) · GET /scans + GET /scans/:id/jobs |
+| Patterns established | Commit-then-dispatch for visible-failure-preferred semantics · Per-task scope-proposal A-H pattern with architectural-commitments section · Triple-pin → DEVELOPMENT-PATTERNS.md promotion criterion · Cancel-wins at scan-level, completion-wins at job-level (M5+) |
+
+**M4 health:** clean execution. The SSE testing complexity surfaced exactly where the M4 landscape pass predicted (4.4 deserved a clean session due to test infrastructure) — generator-extraction pivot delivered the right testability with no behavior compromise.
+
+**Ready for M5.** Worker-side foundation in `shieldscan-engine` Go repo. ADR-013 forcing-function: Go workers must NOT have PostgreSQL credentials in their config (M5 task 5.6).
+
 ### 2026-04-30 — Task 4.6: cross-project comparison rejected (409 scans_project_mismatch)
 
 **Decision.** Compare endpoint requires both scans to belong to the same project. Cross-project comparison (project A baseline vs project B current) is conceptually valid for orgs running the same codebase across multiple environments (staging/prod), but at MVP it's a niche use case that complicates the contract.
