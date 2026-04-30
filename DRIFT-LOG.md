@@ -87,6 +87,58 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.1: Redis Streams over Pub/Sub for progress events (ADR-014)
+
+**ADR-014 ships.** Plan literal §4.1 + §4.4 sketched a Pub/Sub-only design for `shieldscan:progress:{scan_id}`. SPEC §6.4 requires `Last-Event-ID` 60s replay — Pub/Sub cannot satisfy this on a multi-process uvicorn worker. ADR-014 captures the decision: Streams (`XADD` + `XREAD BLOCK` for live, `XRANGE` for replay) as a single primitive; multi-process reconnects work correctly because all workers read the same Stream.
+
+**Hybrid (Streams + Pub/Sub) considered and rejected** for MVP scope: two writes per event, two consumer codepaths, two failure modes — justifiable at 100k+ concurrent connection scale (Discord, Slack pattern), not at MENA-SMB MVP scale (1–3 concurrent scans × <10 viewers each). `XREAD BLOCK` is Redis's Streams-equivalent of `SUBSCRIBE` and handles the fan-out trivially. Wrapper isolation makes a future hybrid swap mechanical if sustained-load profiling shows fan-out hot.
+
+**Forcing function:** `test_subscriber_replay_returns_history` requires `XRANGE` semantics. Test docstring explicitly references ADR-014 so a future "simplification" reverting to Pub/Sub fails immediately with a self-documenting message.
+
+**Commit:** `shieldscan-api` `349fc5e` (api), `shieldscan-docs` `<TASK4.1_DOCS_COMMIT>` (ADR + SPEC patch).
+
+### 2026-04-30 — Task 4.1: SPEC §7.2 wording patched (Channel → Stream)
+
+**Cosmetic + semantic.** SPEC §7.2 line 769 originally read "Channel: `shieldscan:progress:{scan_id}`" — Pub/Sub vocabulary inconsistent with the ADR-014 Streams decision. Patched to "Stream:" + a paragraph noting the producer/consumer primitives (`XADD ... MAXLEN ~ 1000` produce, `XRANGE`/`XREAD BLOCK` consume) and a final paragraph noting that cancel + completions remain Pub/Sub.
+
+Same docs commit as ADR-014 — patching the spec without the ADR would be confusing in isolation.
+
+### 2026-04-30 — Task 4.1: Mixed-primitive use (Streams for progress, Pub/Sub for cancel + completions)
+
+**Pin.** Streams used ONLY for `shieldscan:progress:{scan_id}` because §6.4 requires replay. Pub/Sub stays for:
+- `shieldscan:cancel:{scan_id}` — one-shot live-only signal. A worker not subscribed when cancel emits cannot usefully consume a stale cancel.
+- `shieldscan:completions` — one-shot completion broadcast. The orchestrator's completions consumer either receives live or rebuilds state from the DB row at startup. Replay adds no value.
+
+This is **intentional, not transitional**. A future "let's unify on Streams everywhere" refactor should NOT happen without a fresh ADR — the asymmetry is the right answer for these specific channels.
+
+### 2026-04-30 — Task 4.1: Cancel-vs-completion race — completion wins
+
+**Pin (no code in 4.1).** If a job finishes at the same instant a cancel arrives, both `job_completed` (to `shieldscan:completions`) and the cancel signal (to `shieldscan:cancel:{scan_id}`) may publish. **Resolution at the worker side (M5 task 5.5):** if the job is already in a terminal state (completed/failed) when the cancel is consumed, cancel becomes a no-op. The DB row reflects whichever terminal state actually landed first. Documented here so 4.5 (cancel endpoint) doesn't accidentally try to override completion server-side.
+
+### 2026-04-30 — Task 4.1: Completions subscriber explicitly punted to 4.2
+
+**Pin.** SPEC §7.3 defines `shieldscan:completions` as a Pub/Sub channel that publishes job-completion events back to the orchestrator. M4 needs a consumer that subscribes and updates `ScanJob.status`/`finding_count`/`duration_ms` rows. **Not a 4.1 primitive** — it's orchestrator-internal coordination, surfaces in Task 4.2's scope proposal as part of the ScanOrchestrator design (likely a background task lifecycle the orchestrator owns, not a standalone wrapper class).
+
+### 2026-04-30 — Task 4.1: Idempotency-key handling deferred to Go worker (M5.5), not Python
+
+**Pin.** SPEC §7.5 specifies `idempotency_key` format `{scan_id}:{tool}:{unix_ts}` with 24h Redis TTL. Python orchestrator (4.2) GENERATES the key inside the dispatched job payload but does NOT touch Redis idempotency state. The SETNX-with-TTL claim happens worker-side at job-pickup time (M5 task 5.5). `test_dispatch_does_not_dedupe_by_idempotency_key` is a NEGATIVE pin — it asserts that duplicate `dispatch()` pushes duplicate items, so a future engineer adding Python-side dedupe breaks this test loudly.
+
+ADP-5 from M4 landscape pass: option 2 (worker-side claim) confirmed.
+
+### 2026-04-30 — Task 4.1: Stream-key cleanup TTL — OPS milestone carry-forward
+
+**Carry-forward.** `XADD ... MAXLEN ~ 1000` bounds each stream's *length*, but the **stream keys themselves** persist after scan completion. At MVP scale this is fine (handful of concurrent scans, tiny memory footprint). At enterprise scale, accumulating thousands of inactive stream keys becomes housekeeping overhead.
+
+**OPS-milestone scope:** janitor that purges `shieldscan:progress:*` keys 24–48h after `Scan.completed_at`. Possibly fold into a single Redis-cleanup job that also handles `shieldscan:cancel:*` channel-key residue. Tracking cost: ~half-day in OPS milestone. Don't try to add cleanup logic in 4.1 — wrong domain.
+
+### 2026-04-30 — Task 4.1: Scan list/detail SPEC §6.2 endpoints deferred from M4 to M10
+
+**Pin.** SPEC §6.2 lists `GET /scans`, `GET /scans/:id`, `GET /jobs[/:jid]` under the Scans domain (7 endpoints). M4 ships 4 of those (POST create, DELETE cancel, GET progress SSE, POST compare). The other 3 are read-side endpoints.
+
+**Decision (M4 boundary):** ship them in M10 (Vulnerability & Report APIs) — the read-side cluster — rather than tacking them onto M4 as a 4.X gap-closer. Pattern variant of the SPEC-gap-closure pattern: 2.Y / 3.X closed gaps where the work fit the milestone's domain (small composition); scan read-side is read-side and benefits from consistent pattern design across the read-side cluster (scans + findings + reports). Building one per write-side milestone risks read-side pattern inconsistency.
+
+The other M4 endpoints are write-side scan operations + the SSE stream; M4 closes after Task 4.6 (compare).
+
 ### 2026-04-30 — Task 3.X: AuthType enum lifted from M1 inline comment
 
 **Refactor.** M1's `ProjectCredential.auth_type` carried only an inline comment (`# cookie | bearer | basic | form | custom_header`) describing legal values. Task 3.X needs the value set programmatically (Pydantic discriminated union, route-handler dispatch), so the comment is lifted into a proper `AuthType(str, PyEnum)` in `app/services/credentials.py`.

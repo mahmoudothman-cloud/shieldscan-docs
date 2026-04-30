@@ -764,9 +764,13 @@ For mobile jobs:
 }
 ```
 
-### 7.2 Progress Events (Go → Redis Pub/Sub → Python → SSE)
+### 7.2 Progress Events (Go → Redis Streams → Python → SSE)
 
-Channel: `shieldscan:progress:{scan_id}`
+Stream: `shieldscan:progress:{scan_id}` (Redis Streams, not Pub/Sub — see ADR-014).
+
+Producer (Go worker): `XADD shieldscan:progress:{scan_id} MAXLEN ~ 1000 * event <json>`. The single-field `event` value carries the JSON payload below; `MAXLEN ~ 1000` bounds retention to ~60s of events at peak emit rate per §6.4 replay requirement.
+
+Consumer (Python SSE): `XRANGE` for `Last-Event-ID` replay, `XREAD BLOCK` for live tail. The two compose seamlessly — replay yields up to the latest committed entry, live picks up from that id forward without duplicate or skip.
 
 ```json
 {
@@ -783,6 +787,8 @@ Channel: `shieldscan:progress:{scan_id}`
 ```
 
 Event types: `job_started`, `recon_started`, `subdomains_discovered`, `job_progress`, `finding_discovered`, `job_completed`, `job_failed`, `job_canceled`.
+
+Cancel signals (`shieldscan:cancel:{scan_id}`) and completions (`shieldscan:completions`) remain Pub/Sub — see §7.3, §7.4 and ADR-014. Mixed-primitive use is intentional, not accidental.
 
 ### 7.3 Job Completion (Go → Redis → Python)
 
@@ -1239,6 +1245,43 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - ADR-011 (revocation strategy for JWT, also Redis-backed)
 - `shieldscan-api` commit `9a4e2c1b7d3f` Alembic rev + `policies.py` refactor (Task 2.4 Commit 0)
 - `shieldscan-api` regression tests: `tests/models/test_credential_indexed_rls.py`
+
+### ADR-014: Redis Streams (not Pub/Sub) for scan progress events
+**Status:** Accepted (2026-04-30, Task 4.1)
+
+**Context:**
+Scan progress events flow Go worker → Redis → Python API → SSE → web client. SPECIFICATION §6.4 requires the SSE endpoint to honor `Last-Event-ID` headers and replay events from the last 60 seconds. The plan literal in IMPLEMENTATION-PLAN.md §4.1 + §4.4 sketched a Pub/Sub-only design that cannot satisfy the replay requirement — Pub/Sub is fire-and-forget with no native replay. On a multi-process uvicorn worker pool, an in-process ring-buffer alternative is process-local: a client reconnecting to a different worker process loses history.
+
+**Decision:**
+Use Redis Streams (`XADD` for produce, `XREAD BLOCK` for live tail, `XRANGE` for replay) as the single primitive for `shieldscan:progress:{scan_id}`. Bound retention with `XADD ... MAXLEN ~ 1000` (approximate trim) — covers ~60s of replay at peak emit rate.
+
+Mixed-primitive use is intentional:
+- `shieldscan:progress:{scan_id}` → **Streams** (replay required).
+- `shieldscan:cancel:{scan_id}` → **Pub/Sub** (one-shot live-only; a worker not subscribed when cancel emits cannot usefully consume a stale cancel — replay would be misleading).
+- `shieldscan:completions` → **Pub/Sub** (one-shot completion broadcast; the orchestrator's completions consumer either receives the live event or rebuilds state from the database row at startup — replay adds no value).
+
+**Consequences:**
+- Multi-process API server reconnects work correctly: any uvicorn worker reads the same Stream, replay is consistent.
+- Stream keys persist after scan completion; cleanup requires either (a) ops-milestone janitor with TTL on completed scans, or (b) periodic `XADD MAXLEN` keeping the per-scan key bounded but accumulating empty/inactive keys. Carry-forward to OPS milestone.
+- One write per event. Equivalent fan-out cost to Pub/Sub at MVP load (1–3 concurrent scans × <10 viewers each); `XREAD BLOCK` is Redis's Streams-equivalent of `SUBSCRIBE`.
+- SPEC §7.2 wording patched in the same docs commit ("Channel:" → "Stream:" + XADD/XREAD/XRANGE primitives).
+
+**Alternatives rejected:**
+- **Pure Pub/Sub.** Cannot satisfy §6.4 replay on multi-process server. In-process ring buffer is process-local; reconnects routed to a different worker lose history. Disqualifying.
+- **Hybrid (Streams + Pub/Sub).** Two writes per event, two consumer codepaths, two failure modes (Stream wrote but Pub/Sub failed → live consumers miss; Pub/Sub wrote but Stream failed → replay misses). Justifiable only if Streams alone shows latency/fan-out concerns at scale. At MVP MENA-SMB scale, `XREAD BLOCK` is an equivalent fan-out primitive to `SUBSCRIBE`. Reject hybrid for MVP; revisit if sustained-load profiling later shows fan-out is hot. The wrapper isolation in `app/services/scan_queue.py` makes that swap mechanical.
+
+**Forcing functions:**
+Tests in `tests/services/test_scan_queue.py` exercise XADD + XREAD round-trip + XRANGE replay. Switching to Pub/Sub would break those tests. Specifically: `test_subscriber_replay_returns_history` requires `XRANGE` semantics — Pub/Sub has no equivalent. The test docstring explicitly references ADR-014 so an engineer debugging a switchback finds the reasoning immediately.
+
+**Open follow-ups:**
+- Stream-key cleanup TTL → OPS milestone (track scan completion time, purge stream keys for completed scans after 24–48h).
+- ADR-013 (state-machine ownership) — docked at Task 4.2 with the orchestrator commit.
+
+**Cross-references:**
+- SPECIFICATION §6.4 (SSE replay requirement).
+- SPECIFICATION §7.2 (channel → stream patch landed in same docs commit).
+- `shieldscan-api` commit `349fc5e` — `app.services.scan_queue`.
+- `tests/services/test_scan_queue.py::test_subscriber_replay_returns_history` — regression guard.
 
 ---
 
