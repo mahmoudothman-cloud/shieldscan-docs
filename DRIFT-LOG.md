@@ -87,6 +87,86 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.2: Python is sole writer for scan state (ADR-013)
+
+**ADR-013 ships.** Captures the state-machine ownership decision: Python writes; Go signals via Redis. The companion `CompletionsConsumer` consumes `shieldscan:completions` Pub/Sub events and applies them to `scan_jobs`/`scans` rows.
+
+**Forcing functions baked in:** Go worker config (M5 task 5.6) excludes PG credentials. `test_consumer_aggregates_scan_status_when_all_jobs_terminal` asserts aggregation happens via Python event consumption, not external trigger. ADR-013's "Anti-patterns this prevents" section pre-emptively addresses three temptations (Go writing partial state, Python reading state from Redis, periodic reconciliation jobs) so a future engineer doesn't quietly violate the discipline.
+
+**Cross-reference forward:** ADR-013 referenced in M5 task 5.6 task definition as the reason worker config must omit PG credentials.
+
+**Commit:** `shieldscan-api` `cf3b30a` (orchestrator + consumer + ScanAction enum), `shieldscan-docs` `<TASK4.2_DOCS_COMMIT>` (ADR-013 + entries).
+
+### 2026-04-30 — Task 4.2: ScanAction enum split from ProjectAction
+
+**Refactor.** Audit-domain enum split discipline (Task 3.2 precedent): `AuthAction` for auth events, `ProjectAction` for project events, **`ScanAction` (new)** for scan events. `ALL_ACTION_ENUMS` registry auto-grows; `test_action_enum_values_are_globally_disjoint` covers it without manual update.
+
+Five values shipped (`SCAN_DISPATCHED`, `SCAN_CANCELED`, `SCAN_COMPLETED`, `SCAN_FAILED`, `SCAN_COMPARED`); one reserved (`SCAN_JOB_RETRIED`) for M5+ retry policy. `audit()` signature widened to `AuthAction | ProjectAction | ScanAction`.
+
+### 2026-04-30 — Task 4.2: payload.auth = None pending ADR-015
+
+**Pin.** Job payloads dispatched to Redis carry `auth: None`. Decrypted-credential transit through Redis (ADR-015 — deferred) ships when the Go worker side can consume it (M5+). Inline TODO in `_build_job_payload` references ADR-015. Pinned by `test_dispatch_payload_auth_is_null_pending_adr_015` — a future "helpful" enablement without writing the ADR breaks the test.
+
+### 2026-04-30 — Task 4.2: completions consumer is FastAPI-lifespan-managed (single task per API process)
+
+**Pin.** `CompletionsConsumer.start()` is invoked from `main.py`'s `lifespan` after Redis init; `.stop()` runs before Redis close. One asyncio task per uvicorn worker process. With N>1 uvicorn processes, every worker subscribes to the same Pub/Sub channel — every completion event is handled N times. Second-and-later handlers see the job already in the terminal state and short-circuit with a DEBUG log:
+
+```python
+if job.status == new_status and job.status in _TERMINAL_JOB_STATUSES:
+    logger.debug(
+        "completion event for already-terminal job_id=%s; "
+        "expected at MVP with N>1 uvicorn workers, not at scale",
+        job_id,
+    )
+```
+
+The DEBUG line is greppable so a future ops view can quantify the actual rate of duplicate handling. Acceptable double-work at MVP scale; consumer-groups (which require Streams, not Pub/Sub for completions) deferred to scale milestone.
+
+### 2026-04-30 — Task 4.2: per-completion audit deliberately skipped — terminal aggregate only
+
+**Audit emission policy for scan lifecycle.** Per-job completion is captured in `scan_jobs.status` column, NOT in `audit_logs`. Only scan-level terminal transitions (`SCAN_COMPLETED`, `SCAN_FAILED`) emit audit rows.
+
+**Don't 'helpfully' add per-job audit rows** — they're noise that would dilute the audit log for security-relevant events. Job-level traceability lives in `scan_jobs` row.
+
+**Forcing function:** `test_consumer_does_not_audit_per_job` emits 2 of 3 completion events (non-terminal at scan level), asserts zero scan-domain audit rows, then emits the final event and asserts exactly ONE `SCAN_COMPLETED` row. Future engineer adding per-job audit emission breaks this test immediately with a clear failure message.
+
+### 2026-04-30 — Task 4.2: commit-then-dispatch ordering — visible failure preferred
+
+**Decision.** `ScanOrchestrator.dispatch()` order is:
+1. INSERT `ScanJob` rows + emit `SCAN_DISPATCHED` audit
+2. **COMMIT the transaction**
+3. Push job payloads to Redis queue
+
+If step 3 fails, DB rows are already committed — customer sees a "ghost queued" scan they can triage (visible failure). The rejected alternative (dispatch-then-commit) buries failures in worker logs as orphan queue entries with no DB row to explain them (silent failure).
+
+**M5+ requirement:** retry/re-dispatch janitor for scans whose `ScanJob.status = 'queued'` longer than a threshold (suggested: 5 minutes). Without it, ghost-queued scans stay forever queued. Acceptable in M4 because visible-failure recovery is easier than silent-failure detection. Cross-ref: ADR-013 forcing function for state ownership.
+
+**Pinned by:** `test_dispatch_commits_before_redis_dispatch` — mocks `queue.dispatch` to raise, asserts `ScanJob` rows persist + the audit row is committed.
+
+### 2026-04-30 — Task 4.2: orchestrator commits its own transaction (not the caller's)
+
+**Pin.** Initial scope-proposal had orchestrator follow the `audit()` "caller owns the transaction" discipline. Reversed at H.3 to support commit-then-dispatch ordering (entry above). Now: `ScanOrchestrator.dispatch()` calls `self.db.commit()` itself before pushing to Redis. The 4.3 route handler MUST NOT commit again after `dispatch()` returns — pinned in the orchestrator docstring.
+
+This is asymmetric with `audit()` (which never commits) and the credentials handler (which commits at the end of the route). Documented loud so future patterns don't inherit the wrong shape.
+
+### 2026-04-30 — Task 4.2: RLS context for non-request paths — completions consumer SETs GUC per event
+
+**New pattern.** The completions consumer runs as a long-lived background task with no request context. Each event opens a fresh `AsyncSession` from `AsyncSessionLocal` and SETs `app.current_org_id` from the event's `organization_id` field before any RLS-scoped read or write.
+
+**Defense-in-depth concern:** the GUC value comes from the consumed event. The Go worker is the only legitimate emitter, but the event could in principle be spoofed by anyone with Redis access. Defense: Redis runs inside our trust boundary (private VPC). Future hardening: HMAC-sign completion events at Go side, verify in consumer. Defer to ops-hardening milestone.
+
+**Carry-forward to DEVELOPMENT-PATTERNS.md** at the next docs cleanup pass: this is the second non-request RLS pattern (after the completions consumer itself). Worth a dedicated entry alongside `select_fresh`.
+
+### 2026-04-30 — Task 4.2: M5+ retry/re-dispatch janitor (commit-then-dispatch follow-up)
+
+**Carry-forward.** Task 4.2 ships commit-then-dispatch ordering. The "ghost queued" failure mode (DB commit succeeds + Redis dispatch fails) requires a janitor process to recover. M5+ worker milestone must include:
+
+- A periodic task that finds `ScanJob` rows with `status = 'queued'` older than threshold (suggested: 5 minutes) AND no corresponding queue entry.
+- Either re-dispatch them (build payload from the persisted row + push to Redis) or transition them to `failed` with a clear `error_message`.
+- Audit emission either way (a new `ScanAction.SCAN_JOB_RETRIED` is already declared/reserved).
+
+Without the janitor, ghost-queued scans stay forever queued and customer support would have to manually intervene. Tracking cost: half-day in M5+ when worker startup lands.
+
 ### 2026-04-30 — Task 4.1: Redis Streams over Pub/Sub for progress events (ADR-014)
 
 **ADR-014 ships.** Plan literal §4.1 + §4.4 sketched a Pub/Sub-only design for `shieldscan:progress:{scan_id}`. SPEC §6.4 requires `Last-Event-ID` 60s replay — Pub/Sub cannot satisfy this on a multi-process uvicorn worker. ADR-014 captures the decision: Streams (`XADD` + `XREAD BLOCK` for live, `XRANGE` for replay) as a single primitive; multi-process reconnects work correctly because all workers read the same Stream.

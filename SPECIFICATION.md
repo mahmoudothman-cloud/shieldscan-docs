@@ -1246,6 +1246,55 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 - `shieldscan-api` commit `9a4e2c1b7d3f` Alembic rev + `policies.py` refactor (Task 2.4 Commit 0)
 - `shieldscan-api` regression tests: `tests/models/test_credential_indexed_rls.py`
 
+### ADR-013: Python is the Sole Writer for Scan State
+**Status:** Accepted (2026-04-30, Task 4.2)
+
+**Context:**
+Scans and scan_jobs have lifecycle state (`queued → reconning → running → analyzing → completed | partial | failed | canceled`). Two services touch these flows: the Python API (creates scans, dispatches jobs, lists results, cancels) and the Go workers (process jobs, run tools, emit progress + completion events).
+
+The question: who is the canonical writer for `Scan.status` + `ScanJob.status` columns?
+
+**Decision:**
+**Python is the sole writer.** Go workers communicate every state change via Redis events; they never write to PostgreSQL.
+
+Concretely:
+- Python `ScanOrchestrator.dispatch()` (Task 4.2) inserts `Scan` (`status=queued`) + `ScanJob` rows.
+- Python `CompletionsConsumer` (Task 4.2) subscribes to `shieldscan:completions` and UPDATEs `scan_jobs` per event; aggregates `Scan.status` when all sibling jobs reach a terminal state.
+- Python cancel endpoint (Task 4.5) UPDATEs `Scan.status = canceled` and emits `shieldscan:cancel:{scan_id}` to signal workers.
+- Go workers consume `shieldscan:queue:{priority}`, run tools, publish progress to `shieldscan:progress:{scan_id}` Stream + completion to `shieldscan:completions` channel. **No PostgreSQL connection.**
+
+**Consequences:**
+- One codepath per state transition. Eliminates concurrent-update races between services.
+- Worker outage = events lag, jobs stay `queued`/`running` until events resume. No DB drift, no inconsistent partial-update state.
+- Go workers don't need PostgreSQL credentials in their config (M5 task 5.6 — see cross-references). One less attack surface.
+- Python becomes the bottleneck for state transitions — but at MVP scale this is fine; the completions consumer is a single async task processing one event at a time, which keeps ordering simple.
+- Python is the source of truth for "what state is this scan in?" — Redis is signaling, PostgreSQL is state.
+
+**Anti-patterns this prevents:**
+- **Go workers writing partial-completion state to PG to "help" Python aggregate.** Workers send events; Python interprets. Even if a Go engineer is convinced the round-trip is "wasteful," the single-writer discipline is what makes the design tractable.
+- **Python re-fetching scan state from Redis as a "cache" before PG.** PG is truth; Redis is signaling. Reading state from Redis in Python is a category error.
+- **Periodic reconciliation jobs that "verify Redis matches PG."** No reconciliation needed — state lives in one place. If you find yourself writing one, the design has been violated upstream.
+
+**Alternatives considered and rejected:**
+- **Dual writers (Python + Go).** Would require cross-service distributed locking (advisory locks, Redlock) on every state-bearing column. Concurrency complexity not justified by performance gain at MVP scale.
+- **Go writes ScanJob, Python writes Scan.** Clean column-level ownership but introduces a hard cross-service handoff on the "all jobs done → Scan.status = completed" transition. Complexity not justified.
+- **Event-sourced architecture (events as source of truth, projections to PG).** Bigger architectural commitment; deferred.
+
+**Forcing functions:**
+- Workers (M5 task 5.6) are configured WITHOUT PostgreSQL credentials. Attempting to write would fail at the network/auth layer — failure is unmissable.
+- Tests in `tests/services/test_completions_consumer.py` verify the Redis event → Python UPDATE round-trip. Specifically `test_consumer_aggregates_scan_status_when_all_jobs_terminal` asserts Python UPDATEs aggregate status from event consumption, not from any external trigger. If a future "optimization" tries to have Go workers write aggregate directly, this test breaks immediately.
+- ADR-014 (Streams over Pub/Sub) is a precondition: progress events flow through Streams, completion events through Pub/Sub. Same single-direction signaling discipline.
+
+**Open follow-ups:**
+- ADR-015 (decrypted credentials in Redis transit): defer until the orchestrator's `auth` block is enabled in job payloads (currently `null`).
+- Multi-region scale: completions consumer is currently one task per API process. At 100+ concurrent scans, may need consumer-group dispatch. Not MVP.
+
+**Cross-references:**
+- ADR-014 (Streams over Pub/Sub for progress events).
+- SPECIFICATION §7.3 (Job Completion channel format).
+- IMPLEMENTATION-PLAN.md M5 task 5.6 (worker startup) — MUST exclude PG credentials. This ADR is referenced there as the reason.
+- `shieldscan-api` commit `cf3b30a` — `app.services.orchestrator` + `app.services.completions_consumer`.
+
 ### ADR-014: Redis Streams (not Pub/Sub) for scan progress events
 **Status:** Accepted (2026-04-30, Task 4.1)
 
