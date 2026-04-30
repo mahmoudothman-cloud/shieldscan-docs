@@ -95,7 +95,7 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **Cross-reference forward:** ADR-013 referenced in M5 task 5.6 task definition as the reason worker config must omit PG credentials.
 
-**Commit:** `shieldscan-api` `cf3b30a` (orchestrator + consumer + ScanAction enum), `shieldscan-docs` `<TASK4.2_DOCS_COMMIT>` (ADR-013 + entries).
+**Commit:** `shieldscan-api` `cf3b30a` (orchestrator + consumer + ScanAction enum), `shieldscan-docs` `a8a024d` (ADR-013 + entries).
 
 ### 2026-04-30 — Task 4.2: ScanAction enum split from ProjectAction
 
