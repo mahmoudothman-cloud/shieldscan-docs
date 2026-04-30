@@ -79,6 +79,7 @@ weasyprint = "^62.3"
 jinja2 = "^3.1.4"
 httpx = "^0.28.0"
 email-validator = "^2.2.0"
+python-multipart = "^0.0.20"   # multipart form parsing for mobile APK/IPA upload (M3 Task 3.3)
 sse-starlette = "^2.1.0"
 prometheus-fastapi-instrumentator = "^7.0.0"
 sentry-sdk = {extras = ["fastapi"], version = "^2.17.0"}

@@ -109,6 +109,8 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **Production impact:** at MVP viewer counts (<20 concurrent SSE viewers per uvicorn worker), connection-pool exhaustion is not a concern. At larger scale, the right fix is a per-request session checkout pattern that the SSE handler explicitly releases — that's an ops-milestone refactor when the test fixture's persistent-connection assumption is also addressed.
 
+**Trigger for action (concrete):** sustained **15+ concurrent SSE connections per uvicorn worker** observed in production metrics (Sentry / Prometheus pool-saturation gauges), **OR** addition of a new long-lived streaming endpoint (e.g. M11 WebSocket dashboard, M5+ live worker logs) that compounds pool pressure on the same uvicorn process. Either condition flips this from "acceptable MVP shape" to "ship Option B + test fixture refactor in the next ops touch."
+
 **Pinned by inline comment** at the SSE handler's "Step 3" block, explicitly calling out the deferred optimization + the test-fixture interaction. Future engineer reading the code will see why `await db.close()` is NOT called.
 
 ### 2026-04-30 — Task 4.4: SSE block_ms = 200ms (vs proposal's 10s)
@@ -166,13 +168,13 @@ Greppable from app logs for "is SSE being used? are clients reconnecting often? 
 | Task ordering followed | 4.1 → 4.2 → 4.3 → 4.5 → 4.6 → 4.4 (deferred 4.4 to last per its known SSE testing complexity) |
 | API commits | 6 (one per task) |
 | Docs commits | 7 (one per task + the ADR-013/014 inline updates) |
-| Test count | 416 (M3 close) → 506 (M4 close) — +90 net new tests |
-| Per-task test growth | 4.1: 12 · 4.2: 14 · 4.3: 19 · 4.5: 12 · 4.6: 13 · 4.4: 12 = 82 + 8 module-reachability auto-pickups |
+| Test count | 416 (M3 close) → 506 (M4 close) — +90 total (+82 task tests + 8 module-reachability auto-pickups) |
+| Per-task test growth | 4.1: 12 · 4.2: 14 · 4.3: 19 · 4.5: 12 · 4.6: 13 · 4.4: 12 = 82 task tests; +8 module-reachability auto-pickups → +90 total |
 | Migrations | 0 (M4 is read-mostly + Redis primitives; no schema changes) |
 | ADRs added | ADR-013 (Python sole writer for scan state) · ADR-014 (Streams over Pub/Sub for progress) |
 | ADRs reserved | ADR-015 (decrypted credentials in Redis) — defer until enabled M5+ |
-| DEVELOPMENT-PATTERNS.md sections added | 2 — `session_factory` DI for long-lived background tasks (4.2) · API-key audit attribution (4.6, triple-pin promotion) |
-| §6.2 endpoints status | 5 of 7 scans-domain endpoints shipped (POST, DELETE cancel, GET progress, POST compare, + 4.6's compare). The other 2 (GET single, GET jobs) **deferred to M10** read-side cluster per Task 4.1's batched DRIFT-LOG decision. |
+| DEVELOPMENT-PATTERNS.md sections added | +2 (M4 delta) — `session_factory` DI for long-lived background tasks (4.2) · API-key audit attribution (4.6, triple-pin promotion). **Total now 3** including section 1 (M3 select_fresh helper). |
+| §6.2 endpoints status | 4 of 9 scans-domain endpoints shipped in M4 (POST create, DELETE cancel, GET progress SSE, POST compare). The other 5 (GET list, GET single, GET jobs, GET jobs/:jid, GET attack-surface) **deferred to M10** read-side cluster per Task 4.1's batched DRIFT-LOG decision. _(Counts reflect Checkpoint 2 §6.2 recount: scans subsection 7→9.)_ |
 | Carry-forwards to M5+ | Worker-side cancel consumption (4.5) · "Ghost queued" retry janitor (4.2 commit-then-dispatch) · ADR-015 (auth-block decryption in Redis transit) · Stream-key cleanup TTL (4.1 ops carry-forward) |
 | Carry-forwards to OPS milestone | Per-request DB session checkout for SSE (4.4 deferred Option B) · SSE per-org/per-scan connection limits · Server-side SSE timeout · HMAC-signed completion events |
 | Carry-forwards to M10 | Pagination for read-side endpoints (referenced from 4.6's truncation cap) · GET /scans + GET /scans/:id/jobs |
@@ -181,6 +183,32 @@ Greppable from app logs for "is SSE being used? are clients reconnecting often? 
 **M4 health:** clean execution. The SSE testing complexity surfaced exactly where the M4 landscape pass predicted (4.4 deserved a clean session due to test infrastructure) — generator-extraction pivot delivered the right testability with no behavior compromise.
 
 **Ready for M5.** Worker-side foundation in `shieldscan-engine` Go repo. ADR-013 forcing-function: Go workers must NOT have PostgreSQL credentials in their config (M5 task 5.6).
+
+### 2026-04-30 — Checkpoint 2 (M4 → M5 transition consolidation): SPEC §6.2 endpoint inventory full recount
+
+**Recount executed.** SPEC §6.2 endpoint inventory underwent a full subsection-by-subsection recount during Checkpoint 2. **Total Phase 1 endpoints corrected from 55 to 68 (+13 net).** Six subsection headers updated:
+
+| Subsection | Header before | Header after | Δ |
+|---|---:|---:|---:|
+| Auth & Users | 8 | 10 | +2 |
+| Organizations & Teams | 6 | 7 | +1 |
+| Projects | 7 | 8 | +1 |
+| Scans | 7 | 9 | +2 |
+| Vulnerabilities | 6 | 7 | +1 |
+| Integrations | 5 | 6 | +1 |
+
+API Keys (3), Mobile Scanning (1), Reports (5), Compliance (3), Billing (6), Tool Health (1), Health & Meta (2), and Marketplace Phase 2 (4) verified correct.
+
+**Drift anatomy (two patterns):**
+
+1. **"New" annotations not folded into headers.** Auth & Users gained `verify-email` + `resend-verification` (each annotated `← new (v3 gap #9)`); Mobile Scanning gained an upload endpoint (`(1 new)`); Tool Health was added wholesale (`(1 new)`); Scans gained `attack-surface` and `compare` (`← NEW`). The annotations were added but the parenthetical subsection counts were never updated.
+2. **Silent additions over time.** Organizations gained PATCH-member; Projects gained `/stats`; Vulnerabilities gained `/history`; Integrations gained `/webhooks`. No annotations and no count updates — pure drift.
+
+**Forcing function added** at the head of §6.2 to prevent recurrence: "_Subsection headers carry endpoint counts. When adding endpoints, update both the line count and the subsection header. Total Phase 1 count must equal sum of subsection counts. Last full recount: 2026-04-30 (Checkpoint 2, M4→M5 transition)._" The "last full recount" date provides a hygiene marker; future engineers see the comment when adding endpoints, and the recount discipline becomes part of the endpoint-add review.
+
+**Grep sweep** for "55 endpoint" references across `shieldscan-docs/` returned only the two SPECIFICATION.md hits (§6.2 header line + total-line). No external/customer-facing materials reference the old 55 figure.
+
+**Historical entries unchanged.** DRIFT-LOG entries that quote the old subsection counts (lines 175, 267, 494–496, 636) are historical records and remain as written; they document state-at-time, not current state.
 
 ### 2026-04-30 — Task 4.6: cross-project comparison rejected (409 scans_project_mismatch)
 
@@ -730,11 +758,13 @@ Not blocking M3 / SaaS deployment (default PSL fetch works there).
 
 **Carry-forward from M2.** `SPECIFICATION.md` §6.2 (line 466–467) lists API-key endpoints under `/orgs/:org_id/api-keys`. Task 2.4 shipped them at `/v1/auth/api-keys` (no `/orgs/:org_id/` prefix). The shipped paths are reasonable for an account-scoped resource where the org is implicit from the JWT, but they diverge from the spec literal.
 
-**Resolution deferred** to a future docs-only commit (no code change needed; both options remain on the table). Two paths:
-- Option A: update `SPECIFICATION.md` §6.2 to match the shipped `/v1/auth/api-keys` paths (codifies what shipped).
-- Option B: add route aliases under `/v1/orgs/{org_id}/api-keys` that delegate to the existing handlers (spec-literal compliance with backward compat).
+**Resolution direction (refined 2026-04-30, Checkpoint 2):** rename code to match SPEC (Outcome B). Org-scoped form (`/v1/orgs/{org_id}/api-keys`) is consistent with every other tenant resource (`/orgs/:org_id/projects`, `/orgs/:org_id/scans`, `/orgs/:org_id/vulnerabilities`, etc.) and makes the tenant boundary explicit in the URL. Updating SPEC to match code (Outcome A) was considered but rejected — the org-scoped pattern is the load-bearing convention across §6.2 and is worth preserving.
 
-Either is fine. Logged here so it doesn't get forgotten between M3 and the M12.5 / pre-launch documentation pass.
+**Why deferred from Checkpoint 2:** Checkpoint 2 is a docs-only commit (M4 → M5 transition consolidation pass). The rename requires a route prefix change in `src/app/routes/api_keys.py`, addition of the `org_id` path parameter (with mismatch-vs-JWT validation matching other org-scoped endpoints), test path updates across `tests/routes/test_api_keys.py`, and grep for any client/integration-test references. Bundling code changes into a docs commit was explicitly scoped out.
+
+**Trigger for action:** next-touch on `routes/api_keys.py`, OR pre-launch consistency sweep, OR explicit task to align. Acceptable to defer because API-key paths are pre-launch (no customer integrations to break by renaming).
+
+**Estimated effort:** ~2 hours — route prefix rename + `org_id` path-param addition with require-org-membership validation + test path updates (~12 tests touch the prefix) + grep-and-fix for any cross-references.
 
 ### 2026-04-23 — Task 2.Y closes SPECIFICATION/IMPLEMENTATION-PLAN gap
 

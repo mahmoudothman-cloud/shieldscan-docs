@@ -434,9 +434,11 @@ ALTER TABLE raw_findings ADD COLUMN engine_category TEXT NOT NULL
 | Business | 50,000 | 600/min |
 | Enterprise | 200,000 | 2,000/min |
 
-### 6.2 Complete Endpoint Inventory (55 endpoints)
+### 6.2 Complete Endpoint Inventory (68 endpoints)
 
-**Auth & Users (8)**
+> **Maintenance note:** Subsection headers carry endpoint counts (e.g. "Projects (8)"). When adding endpoints, update **both** the line count **and** the subsection header. Total Phase 1 count must equal the sum of subsection counts. Last full recount: 2026-04-30 (Checkpoint 2, M4→M5 transition).
+
+**Auth & Users (10)**
 ```
 POST   /auth/register
 POST   /auth/login
@@ -450,7 +452,7 @@ POST   /auth/verify-email          ← new (v3 gap #9)
 POST   /auth/resend-verification   ← new (v3 gap #9)
 ```
 
-**Organizations & Teams (6)**
+**Organizations & Teams (7)**
 ```
 POST   /orgs
 GET    /orgs/:org_id
@@ -468,7 +470,7 @@ GET    /orgs/:org_id/api-keys
 DELETE /orgs/:org_id/api-keys/:id
 ```
 
-**Projects (7)**
+**Projects (8)**
 ```
 POST   /orgs/:org_id/projects
 GET    /orgs/:org_id/projects
@@ -485,7 +487,7 @@ GET    /orgs/:org_id/projects/:id/stats
 POST   /orgs/:org_id/projects/:id/mobile/upload   ← NEW
 ```
 
-**Scans (7)**
+**Scans (9)**
 ```
 POST   /orgs/:org_id/projects/:pid/scans
 GET    /orgs/:org_id/projects/:pid/scans
@@ -498,7 +500,7 @@ GET    /orgs/:org_id/scans/:scan_id/attack-surface  ← NEW (recon)
 POST   /orgs/:org_id/scans/compare                  ← NEW (v3 gap #15)
 ```
 
-**Vulnerabilities (6)**
+**Vulnerabilities (7)**
 ```
 GET    /orgs/:org_id/scans/:scan_id/vulnerabilities
 GET    /orgs/:org_id/vulnerabilities
@@ -535,7 +537,7 @@ GET    /orgs/:org_id/billing/invoices
 POST   /orgs/:org_id/billing/webhooks/stripe
 ```
 
-**Integrations (5)**
+**Integrations (6)**
 ```
 POST   /orgs/:org_id/integrations/github
 POST   /orgs/:org_id/integrations/slack
@@ -564,7 +566,7 @@ GET    /health
 GET    /v1/openapi.json
 ```
 
-**Total Phase 1: 55 endpoints. Phase 2 adds 4 marketplace endpoints.**
+**Total Phase 1: 68 endpoints. Phase 2 adds 4 marketplace endpoints.**
 
 ### 6.3 Request/Response Examples
 
