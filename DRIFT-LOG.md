@@ -87,6 +87,73 @@ Consistent with the `PROJECT_DOMAIN_VERIFICATION_FAILED` discipline, which fires
 
 **For future engineers:** if you're tempted to add `if not was_already_verified: audit(...)` to the success branch — don't. Audit-row dedup adds complexity for questionable benefit (the only "noise" suppressed is intentional event records). The pattern as shipped is the desired behavior.
 
+### 2026-04-30 — Task 4.5: cancel-wins at scan-level (reversal of M4 landscape framing)
+
+**Reversal + clarification.** The M4 landscape pass said *"completion wins, cancel becomes a no-op"* for cancel-vs-completion races. That framing conflated two different races:
+
+- **Job-level race:** A worker tool finishes as the cancel signal arrives. The worker decides what status to emit (generally completion if results were written, cancel otherwise). M5+ worker concern.
+- **Scan-level race:** The cancel endpoint sets `Scan.status = CANCELED` while the last `job_completed` event is in flight to the consumer. **Different question.**
+
+**Task 4.5 decision (scan-level):** **cancel wins.** User intent is sticky. `CompletionsConsumer._maybe_complete_scan` adds `ScanStatus.CANCELED` to its terminal-state short-circuit set so a completion event arriving after the cancel does not overwrite the scan-level CANCELED state.
+
+Job-level state still reflects what each worker reported — some `completed`, some `canceled`. Power users can drill into `scan_jobs` rows even when scan-level says CANCELED.
+
+**Forcing function:** `test_consumer_does_not_overwrite_canceled_scan` in `tests/services/test_completions_consumer.py`. Test cancels at scan-level, drives completion events for all jobs, asserts `Scan.status` stays CANCELED + zero `SCAN_COMPLETED` audit rows. Future "helpful" change that drops `CANCELED` from the short-circuit breaks this test immediately. Test docstring explicitly references this DRIFT-LOG entry + ADR-013.
+
+**Cross-reference:** ADR-013 anti-patterns section ("Periodic reconciliation jobs that 'verify Redis matches PG'") — same single-writer discipline.
+
+**Commit:** `shieldscan-api` `97bbba6`.
+
+### 2026-04-30 — Task 4.5: terminal-state distinction (409 vs 204 idempotent)
+
+**Pin.** Cancel state-transition policy:
+- Active states (queued/reconning/running/analyzing) → CANCELED + audit + 204.
+- Already-CANCELED → 204 + fresh audit row (idempotent state, audit-on-event discipline).
+- Terminal-final (completed/partial/failed) → **409 `scan_already_terminal`**. The work concluded; cancel is semantically meaningless. 409 (not 410) because the scan isn't in the deleted state — it's in a final-success/partial/failure state that conflicts with the cancel operation. Same distinction-logic as Task 3.X PATCH-on-archived-project 409.
+
+**Audit-on-event discipline matches Task 3.2 reverify pin:** the cancel ACTION is the event. Even when state is unchanged (already-CANCELED), each cancel attempt emits a fresh audit row. Pinned by `test_cancel_already_canceled_returns_204_with_fresh_audit`.
+
+### 2026-04-30 — Task 4.5: worker-side cancel consumption is M5+ work — signal goes into the void today
+
+**Operational pin.** The cancel endpoint publishes to `shieldscan:cancel:{scan_id}` per SPEC §7.4 + ADR-014. **No subscriber exists yet.** Go workers (M5) will subscribe in Task 5.5 (worker processing loop) and call `ctx.Cancel()` on in-flight tools.
+
+Until M5 ships:
+- Cancel endpoint works from the API perspective: PG state flips, audit row emitted, Pub/Sub publish succeeds.
+- No actual abort happens — there are no Go workers yet.
+- Future engineer running the cancel endpoint and not seeing scans abort should NOT think the system is broken; the worker side just isn't built.
+
+**M5 task 5.5 acceptance criterion:** worker subscribes to cancel channel for each job it picks up; abort propagates through tool runner. The cancel pattern is end-to-end testable only after M5.5 lands.
+
+### 2026-04-30 — Task 4.5: DELETE verb + scan_id-scoped router pattern
+
+**Pattern pin.** SPEC §6.2 line 491: `DELETE /orgs/:org_id/scans/:scan_id`. Note: **scan_id-scoped path, not project-scoped.** Different shape from Task 4.3's POST under `/orgs/{org_id}/projects/{project_id}/scans`.
+
+`routes/scans.py` now exports two `APIRouter` instances:
+- `project_scans_router` — Task 4.3 POST/(future GET) project-scoped.
+- `scan_router` — Task 4.5 DELETE + future M4 (4.4 SSE) + M10 (single GET, jobs GET) scan_id-scoped operations.
+
+Two routers in one file matches the `routes/projects.py` precedent (CRUD + nested verify + nested credentials all colocated). Both registered in `main.py`.
+
+**DELETE verb-discipline:** matches existing project DELETE (soft-delete via `archived_at`) + api-key DELETE. Cancel = soft-delete-of-active-work. Row remains; status flips.
+
+### 2026-04-30 — Task 4.5: any-member auth (symmetric with scan-create)
+
+**Decision.** Cancel uses `require_org_membership()` (default — JWT or API key, no admin gate). Symmetric with Task 4.3 scan-create.
+
+**Cost-protection counter-argument considered + rejected:** cancel terminates work that may have spent compute + AI cost. But the same is true of scan-create (also any-member, also costs money). Asymmetric gating would require admin to cancel scans they themselves created via CI/API key. Symmetry wins: anyone who can create a scan can cancel one.
+
+**Pinned by** `test_cancel_via_api_key_succeeds` + `test_cancel_via_api_key_audits_with_key_prefix` (the second also pins the audit details API-key-prefix shape).
+
+### 2026-04-30 — Task 4.5: cancel endpoint ships without rate limiting
+
+**Decision.** No rate limit on the cancel endpoint in 4.5. Cancel-spam abuse vectors exist:
+- Single-scan audit-log fill (the audit-on-event discipline emits a row per attempt).
+- Multi-scan CPU load (each cancel hits PG + Redis + audit_logs).
+
+Both real but not serious at MVP scale. Revisit if abuse patterns emerge in production.
+
+**Adding rate-limit later is mechanical:** existing `rate_limit` dep + new scope name (e.g. `scan_cancel`). Cross-ref: scan-create rate-limit pattern (also not yet shipped — same deferral).
+
 ### 2026-04-30 — Task 4.3: route + orchestrator share a single transaction (H.1)
 
 **Pin.** `POST /v1/orgs/{org}/projects/{pid}/scans` flushes the new `Scan` row and passes the same `AsyncSession` to `ScanOrchestrator.dispatch()`. The orchestrator INSERTs ScanJob rows + emits `SCAN_DISPATCHED` audit + COMMITs **one** transaction covering Scan + ScanJobs + audit atomically.
