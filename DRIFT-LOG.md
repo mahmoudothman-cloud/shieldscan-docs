@@ -210,6 +210,40 @@ API Keys (3), Mobile Scanning (1), Reports (5), Compliance (3), Billing (6), Too
 
 **Historical entries unchanged.** DRIFT-LOG entries that quote the old subsection counts (lines 175, 267, 494–496, 636) are historical records and remain as written; they document state-at-time, not current state.
 
+### 2026-05-01 — Task 5.1 Commit 2: engine repo bootstrapped, all forcing functions wired
+
+**Engine bootstrap shipped under TDD discipline.** Following Commit 1 (docs sweep, `95d04fe`), the user installed Go 1.26.2 + golangci-lint v2.11.4 between sessions; this commit bootstraps `shieldscan-engine/` with all forcing-function infrastructure for ADR-013/016/017/018/021.
+
+**16 tests pass** at engine bootstrap (4 buildguard + 4 config + 8 events). All race-clean. golangci-lint v2 reports 0 issues. Worker binary builds clean.
+
+**Two version adjustments surfaced during bootstrap:**
+- **golangci-lint v2.11.4** (not v1.62.0 as referenced in scope proposal). v2.x is current upstream stable; v1.62.0 would be a stale pin. v2 has breaking config-schema changes from v1 (the `version: "2"` directive + restructured linter blocks). Pinned in VERSIONS.md §2.4 with a dedicated lint-toolchain row. Engine `.golangci.yml` authored against v2 schema. See engine `DRIFT-LOG.md` for full rationale.
+- **aws-sdk-go-v2 v1.32.0 → v1.32.2** (patch bump). aws-sdk-go-v2/service/s3 v1.66.0 has a hard transitive requirement on aws-sdk-go-v2 v1.32.2; resolver refused v1.32.0. Patch bump within the same minor — auto-upgrade per VERSIONS.md §4.4. VERSIONS.md §2.4 updated.
+
+**Forcing-function self-catch.** Linter caught `exec.Command` (instead of `exec.CommandContext`) in the buildguard tests on the first lint pass. Refactored to `exec.CommandContext(t.Context(), ...)` before commit. ADR-021 working as intended — the noctx linter caught a violation in the very test code that pins ADR-021's forcing function. Pattern validation: the discipline is enforceable, not aspirational.
+
+**Engine repo structure** matches the M5 landscape pass §10 proposal:
+```
+shieldscan-engine/
+├── cmd/worker/main.go
+├── internal/{buildguard,config,events}/
+├── testdata/README.md
+├── .github/workflows/engine.yml
+├── .golangci.yml
+├── README.md, CLAUDE.md, DRIFT-LOG.md
+├── .env.example, .gitignore
+└── go.mod, go.sum
+```
+
+Future packages (lazy creation in 5.2-5.6): `internal/tools/`, `internal/redis/{stream,pubsub}.go`, `internal/worker/`, `deploy/docker-compose.services.yml`. Engine-side `DEVELOPMENT-PATTERNS.md` deferred per triple-pin precedent.
+
+**Two-repo docs split (Q3 Option B) implemented:**
+- Engine `CLAUDE.md` — delta from parent, ~150 lines, with cross-reference block, ctx-discipline gotchas, build commands, PR checklist subsuming CONTRIBUTING.md (Q4 decision).
+- Engine `DRIFT-LOG.md` — engine-only decisions, newest-first.
+- Cross-cutting docs (CONSTITUTION/SPEC/VERSIONS/PLAN/TOOL-ARCH/OPS) remain in `shieldscan-docs/`.
+
+**M5 milestone-boundary opens** with this commit. Tasks 5.2-5.6 follow the M4 cadence at smaller scope; M5 close estimated at 1.5-2.5 weeks per the landscape pass.
+
 ### 2026-05-01 — Task 5.1 docs sweep (Commit 1 of 2): four ADRs land + SPEC patches
 
 **Architectural foundation for M5.** Task 5.1's docs commit lands the four ADRs (016/017/018/021) drafted during the M4→M5 transition Checkpoint 3 landscape pass + scope-proposal review. SPEC §13 grows from ADR-014 → ADR-021 with intentional 019/020 gap (see numbering note below).

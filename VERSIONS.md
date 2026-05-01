@@ -118,7 +118,7 @@ require (
     // what other binaries in the repo import. (See Task 5.1
     // DRIFT-LOG entry for Checkpoint 4 reversal rationale.)
 
-    github.com/aws/aws-sdk-go-v2 v1.32.0
+    github.com/aws/aws-sdk-go-v2 v1.32.2
     github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
     github.com/stretchr/testify v1.9.0
     github.com/rs/zerolog v1.33.0
@@ -146,6 +146,12 @@ require (
     go.uber.org/goleak v1.3.0
 )
 ```
+
+**Lint toolchain (Go side):**
+
+| Tool | Pinned Version | Notes |
+|---|---|---|
+| **golangci-lint** | **v2.11.4** | v2.x schema (breaking change from v1). Released 2026-03-22. Configured via `.golangci.yml` with `version: "2"` directive. CI workflow (`.github/workflows/engine.yml`) wires `golangci/golangci-lint-action@v6` with explicit `version: 'v2.11.4'`. Linters enabled beyond v2 standard: containedctx, noctx, gosec — all ADR-021 + defense-in-depth forcing functions. See engine DRIFT-LOG 2026-05-01 entry for v1→v2 decision rationale. |
 
 ### 2.5 Security Scanning Tools (the 19)
 
