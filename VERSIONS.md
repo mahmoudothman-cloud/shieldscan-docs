@@ -103,11 +103,17 @@ module github.com/odyssey/shieldscan-engine
 
 go 1.26
 
+// asynq dropped per ADR-016 — raw Redis matches M4 dispatch contract
+// (Python LPUSHes shieldscan:queue:{priority}; Go BRPOPs same).
 require (
-    github.com/hibiken/asynq v0.25.1
     github.com/redis/go-redis/v9 v9.7.0
     github.com/docker/docker v27.3.1+incompatible
+
+    // lib/pq v1.10.9 — repo-scope only; cmd/worker/ MUST NOT
+    // import (ADR-013 forcing function). Reserved for future
+    // admin tooling under cmd/admin/.
     github.com/lib/pq v1.10.9
+
     github.com/aws/aws-sdk-go-v2 v1.32.0
     github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
     github.com/stretchr/testify v1.9.0
@@ -115,6 +121,25 @@ require (
     github.com/spf13/cobra v1.8.1
     github.com/prometheus/client_golang v1.20.0
     github.com/getsentry/sentry-go v0.29.0
+)
+
+// Test dependencies (used only under _test.go build tag).
+require (
+    // miniredis/v2 v2.33.0 — in-process Redis for tests
+    //   (Python's fakeredis equivalent for Go).
+    //   Compat with go-redis/v9.7.0: documented-confidence,
+    //   not test-verified until Task 5.4 implementation.
+    github.com/alicebob/miniredis/v2 v2.33.0
+
+    // httpmock v1.3.1 — transport-level HTTP mock for
+    //   DockerServiceRunner tests (Task 5.3).
+    github.com/jarcoal/httpmock v1.3.1
+
+    // goleak v1.3.0 — goroutine-leak detection.
+    //   ADR-021 ctx discipline forcing function. Use via
+    //   goleak.VerifyTestMain(m) in test packages that spawn
+    //   goroutines.
+    go.uber.org/goleak v1.3.0
 )
 ```
 

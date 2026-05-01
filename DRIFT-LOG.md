@@ -210,6 +210,33 @@ API Keys (3), Mobile Scanning (1), Reports (5), Compliance (3), Billing (6), Too
 
 **Historical entries unchanged.** DRIFT-LOG entries that quote the old subsection counts (lines 175, 267, 494–496, 636) are historical records and remain as written; they document state-at-time, not current state.
 
+### 2026-05-01 — Checkpoint 4 (VERSIONS sync before M5): asynq dropped + test deps added
+
+**Pre-M5 docs sweep.** Ahead of Task 5.1 scaffolding the `shieldscan-engine` Go repo, VERSIONS.md §2.4 was reconciled with the four ADRs landing at Task 5.1's architectural-commitments preamble (ADR-016 asynq drop · ADR-017 findings-path · ADR-018 Streams correction · ADR-021 ctx discipline).
+
+**Version-bumps portion was a no-op confirmation.** §2.1 + §2.4 had been kept current with the Go ecosystem independently of the plan literal:
+
+| Component | VERSIONS.md (already pinned) | Plan §5.1 lines 1510-1525 (stale) |
+|---|---|---|
+| Go | 1.26.2 | 1.22 |
+| go-redis/v9 | 9.7.0 | 9.4.0 |
+| docker | 27.3.1+incompatible | 25.0.0+incompatible |
+| aws-sdk-go-v2 | 1.32.0 | 1.24.0 |
+| testify | 1.9.0 | 1.8.4 |
+| zerolog | 1.33.0 | 1.31.0 |
+| cobra | 1.8.1 | 1.8.0 |
+
+**Net commit deltas:**
+- **REMOVED:** `github.com/hibiken/asynq v0.25.1` (per ADR-016, finalized at Task 5.1). Inline comment at the head of the require block pins the rationale: "raw Redis matches M4 dispatch contract."
+- **ADDED:** `github.com/alicebob/miniredis/v2 v2.33.0` — in-process Redis for tests (fakeredis-equivalent for Go). Compat with go-redis/v9.7.0 documented as confidence, not test-verified (rework risk if surfaced at Task 5.4 implementation).
+- **ADDED:** `github.com/jarcoal/httpmock v1.3.1` — transport-level HTTP mock for DockerServiceRunner tests (Task 5.3).
+- **ADDED:** `go.uber.org/goleak v1.3.0` — goroutine-leak detection (ADR-021 ctx discipline forcing function).
+- `lib/pq v1.10.9`: scope comment added — repo-scope only; `cmd/worker/` MUST NOT import (ADR-013 forcing function reservation for future admin tooling under `cmd/admin/`).
+
+**Plan-staleness flag (state-at-time discipline).** IMPLEMENTATION-PLAN.md §5.1 lines 1510-1525 carry a stale `go.mod` block (go 1.22, asynq v0.24.1, redis 9.4.0, docker 25.0.0, etc.). The plan stays as written; per CLAUDE.md document hierarchy (VERSIONS wins), Task 5.1's actual `go.mod` will be authored from VERSIONS.md, not from the plan literal. **This is plan-staleness, not VERSIONS-staleness** — VERSIONS.md was kept current; the plan was authored before the version refresh and reflects state-at-time. Future eyes opening §5.1 should treat the dependency block as illustrative, not authoritative.
+
+**Forcing function for Task 5.1 kickoff.** ADR-016/017/018/021 cross-references in this DRIFT-LOG (and in §13 ADR additions when 5.1 ships) ensure no rediscovery cycle for the asynq question, the findings-path question, the Pub/Sub-vs-Streams question, or the goroutine-discipline question.
+
 ### 2026-04-30 — Task 4.6: cross-project comparison rejected (409 scans_project_mismatch)
 
 **Decision.** Compare endpoint requires both scans to belong to the same project. Cross-project comparison (project A baseline vs project B current) is conceptually valid for orgs running the same codebase across multiple environments (staging/prod), but at MVP it's a niche use case that complicates the contract.
