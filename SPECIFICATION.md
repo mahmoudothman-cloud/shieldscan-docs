@@ -42,7 +42,7 @@
 
 **Tech Stack:**
 - **API:** FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2, PostgreSQL 16, Redis 7, Qdrant
-- **Scan Engine:** Go 1.22, asynq, Nuclei SDK, Docker SDK, MobSF REST API
+- **Scan Engine:** Go 1.22, Nuclei SDK, Docker SDK, MobSF REST API
 - **Frontend:** React 18, TypeScript, Tailwind CSS, Vite, TanStack Query
 - **AI:** Claude API (Opus/Sonnet/Haiku), OpenAI Embeddings
 - **Infrastructure:** Cloudflare R2, Stripe, SendGrid/Resend
@@ -806,9 +806,22 @@ Channel: `shieldscan:completions`
   "finding_count": 47,
   "duration_ms": 145000,
   "idempotency_key": "scn_x1y2z3:nuclei:1711720200",
-  "timestamp": "2026-04-18T14:34:27Z"
+  "timestamp": "2026-04-18T14:34:27Z",
+  "findings": [
+    { "tool_name": "nuclei", "finding_type": "xss", "severity": "high", "...": "..." }
+  ],
+  "event_seq": { "index": 1, "total": 1 }
 }
 ```
+
+**Findings persistence (per ADR-017).** The `findings` array carries the RawFinding rows produced by the engine for this job; the Python `CompletionsConsumer` (M4 Task 4.2) inserts them in the same transaction as the `ScanJob.status` update. `findings` is REQUIRED on terminal events (`status` ∈ {`completed`, `partial`}) and absent on `failed`/`canceled` events.
+
+**Sequencing for large batches (per ADR-017).** The engine caps each event at **1000 findings** (`MaxFindingsPerEvent`). Jobs producing >1000 findings emit multiple `job_completed` events with `event_seq.total > 1`:
+
+- Intermediate events: `status: "partial_findings"`, `event_seq: {index: N, total: T}`, `N < T`. No `finding_count`/`duration_ms`.
+- Terminal event: canonical `status` (`completed`/`partial`), `event_seq: {index: T, total: T}`, authoritative `finding_count` covering all batches, `duration_ms`.
+
+Single-event jobs (≤1000 findings) carry `event_seq: {index: 1, total: 1}`. The `event_seq` field is REQUIRED on every `job_completed` event for forward-compatibility — consumers always read it rather than branching on presence.
 
 ### 7.4 Scan Cancellation (Python → Redis → Go)
 
@@ -1333,6 +1346,299 @@ Tests in `tests/services/test_scan_queue.py` exercise XADD + XREAD round-trip + 
 - SPECIFICATION §7.2 (channel → stream patch landed in same docs commit).
 - `shieldscan-api` commit `349fc5e` — `app.services.scan_queue`.
 - `tests/services/test_scan_queue.py::test_subscriber_replay_returns_history` — regression guard.
+
+### ADR-016: Raw Redis (not Asynq) for Go-side queue protocol
+**Status:** Accepted (2026-05-01, Task 5.1)
+
+**Context:**
+SPECIFICATION §3.3 + IMPLEMENTATION-PLAN.md preamble both originally named "asynq" in the stack. Plan Task 5.1's `go.mod` block (lines 1510-1525) imports `github.com/hibiken/asynq v0.24.1`. **But:**
+- M4 Python orchestrator (Task 4.1, shipped) dispatches via raw `LPUSH shieldscan:queue:{priority}`.
+- Plan Task 5.4 step 2 consumes via raw `BRPOP shieldscan:queue:{priority}` — matches the Python side.
+- Asynq has its own queue protocol (`asynq:{queue}`, `asynq:active`, JSON envelope with own fields including `type`, `payload`, `id`, `retry`, `unique_key`). **The two sides cannot co-exist on the same queue with raw + asynq mixed.**
+
+The asynq dependency in plan §5.1 is therefore dead weight as written — imported but unused, with the actual queue logic in §5.4 using raw Redis primitives.
+
+The question: drop asynq, or refactor M4 to adopt it end-to-end?
+
+**Decision:**
+**Drop asynq from the stack.** Use raw Redis `LPUSH` + `BRPOP` end-to-end on `shieldscan:queue:{priority}` queues. The Go consumer in Task 5.4 reads the exact JSON payload Python's M4 orchestrator already writes (per SPEC §7.1 schema) — no envelope, no library coupling.
+
+Concretely:
+- Remove `github.com/hibiken/asynq` from `shieldscan-engine/go.mod` (Checkpoint 4 commit `39e1e5e`, already done).
+- Update SPECIFICATION §3.3 stack list to drop "asynq" (this commit).
+- Update IMPLEMENTATION-PLAN.md preamble stack list to drop "asynq" (this commit).
+- Plan §5.1 go.mod literal stays as written (state-at-time discipline); Task 5.1 implementation authors go.mod from VERSIONS.md per CLAUDE.md hierarchy.
+- Plan §5.4 raw `BRPOP` literal is the canonical implementation shape — no plan correction needed for §5.4's queue side (Pub/Sub vs Streams progress is a separate concern; see ADR-018).
+
+**Consequences:**
+- Smaller dependency graph: `go.mod` drops asynq + transitive deps. Less attack surface, faster builds, fewer security-advisory PRs.
+- Custom retry logic: ADR-013 already moved retry/state-machine ownership to Python (commit-then-dispatch + completions consumer). Asynq's retry primitives would have been redundant.
+- Custom dedup: idempotency_key + Redis SETNX (Task 5.5) is what we ship. Asynq's `unique_key` would have been redundant.
+- Lose Asynq dashboard — observability provided by Sentry (`getsentry/sentry-go ^v0.29.0` in VERSIONS.md §2.4) + Prometheus (`prometheus/client_golang v1.20.0`).
+- Lose scheduled-jobs primitive — no MVP need; cron-equivalents land at OPS milestone if needed.
+- Single source of queue-protocol truth: SPEC §7.1 schema. Both sides reference it directly; no library version drift to manage.
+
+**Anti-patterns this prevents:**
+- **"Should we adopt Asynq?" rediscovery cycles** every 6 months. ADR pins the call so future engineers find the reasoning before re-litigating.
+- **Hybrid migration ("we'll refactor to Asynq later")** that never happens but rots in TODOs and dead imports.
+
+**Alternatives considered and rejected:**
+- **Adopt Asynq end-to-end (refactor M4 Python).** Requires either a Python Asynq-compatible client library (third-party with weaker maintenance posture) or hand-rolling Asynq's wire-format encoding in Python. Cost: M4 contract churn + new third-party dep + test rewrites. Benefit: dashboard + retry/scheduling primitives already replaced by ADR-013 + Sentry. Cost > benefit.
+- **Adopt Asynq on the Go side only, consuming from raw queues.** Doesn't work — Asynq is not a generic queue wrapper; its consumer expects asynq-encoded entries in asynq's own keyspace.
+- **Adopt Asynq for a future job category (e.g., scheduled scans).** Defer-on-trigger pattern: revisit if/when scheduled-scan use case lands and the cron-equivalent build cost exceeds Asynq adoption cost. Carry-forward, not blocker.
+
+**Forcing functions:**
+- `shieldscan-engine/go.mod` MUST NOT contain `github.com/hibiken/asynq`. Verified by Task 5.1 buildguard test:
+  ```go
+  func TestGoMod_ExcludesAsynq(t *testing.T) {
+      out, err := exec.Command("go", "list", "-m", "all").Output()
+      require.NoError(t, err)
+      assert.NotContains(t, string(out), "hibiken/asynq",
+          "asynq must not appear in dependency graph (ADR-016)")
+  }
+  ```
+  This pins the rule at the build-graph layer, not just by code review.
+- VERSIONS.md §2.4 inline comment at the top of the require block: `// asynq dropped per ADR-016 — raw Redis matches M4 dispatch contract`. Anyone considering re-adding asynq sees the rationale before opening this ADR.
+
+**Open follow-ups:**
+- If scheduled-scan use case lands (Phase 2), revisit Asynq adoption as a targeted dependency for that job category only — would not affect the M4-shipped raw-queue path.
+
+**Cross-references:**
+- ADR-013 (Python sole writer) — the load-bearing reason Asynq's retry/state primitives are redundant.
+- ADR-014 (Streams over Pub/Sub) — same plan-correction shape; both ADRs override stale plan literals.
+- SPECIFICATION §7.1 (Job Dispatch schema) — canonical contract; both sides reference it directly.
+- IMPLEMENTATION-PLAN.md §5.1 lines 1510-1525 (stale go.mod literal) — left as written per state-at-time discipline.
+- IMPLEMENTATION-PLAN.md §5.4 lines 1644-1663 (raw BRPOP literal) — canonical implementation shape, retained.
+- M4 commit `349fc5e` (`app.services.scan_queue.ScanQueue.push`) — the LPUSH-side contract this Go consumer mirrors.
+- Checkpoint 4 commit `39e1e5e` (asynq removed from VERSIONS.md §2.4).
+
+### ADR-017: Findings inline in `job_completed` events (with sequencing)
+**Status:** Accepted (2026-05-01, Task 5.1)
+
+**Context:**
+ADR-013 (Python sole writer) forbids Go workers from writing to PostgreSQL. But scan findings are produced in Go (tool runners parse stdout, build `RawFinding` structs) and must end up persisted in the `vulnerabilities`/`raw_findings` PG tables for downstream queries (M9 AI pipeline, M10 read-side endpoints, M11 dashboard).
+
+Plan Task 5.5 step 2 has:
+```go
+if err := w.storage.StoreFindings(ctx, findings); err != nil { return err }
+publisher.Publish(ctx, "job_completed", ...)
+```
+That's a direct Go→PG write, contradicting ADR-013. Plan was authored before ADR-013; the contradiction is plan-staleness, not architectural intent.
+
+The question: how do findings cross the Go→Python boundary, given the sole-writer rule?
+
+**Decision:**
+**Inline findings in the `job_completed` event payload.** The Python `CompletionsConsumer` (Task 4.2, lifespan-managed, runs under the sole-writer DB role) inserts the findings rows in the same transaction as the `ScanJob.status` update. SPEC §7.3 schema patched in this commit to add `findings` array + `event_seq` object.
+
+**Soft cap + sequencing.** Workers cap each event at **1000 findings** (`MaxFindingsPerEvent`, defined in `shieldscan-engine/internal/events/events.go`). Jobs producing >1000 findings split into multiple `job_completed` events with `event_seq.total > 1`:
+- Intermediate batches: `event_seq: {index: N, total: T}`, `N < T`, `status: "partial_findings"`.
+- Terminal batch: `event_seq: {index: T, total: T}`, canonical `status`/`finding_count`/`duration_ms`.
+
+Python `CompletionsConsumer` semantics:
+- On `event_seq.total == 1`: existing single-event path — insert findings + update ScanJob status in one txn.
+- On `event_seq.total > 1`: collect batches keyed by `(scan_id, job_id)` in an in-memory accumulator. On terminal batch, insert the union of accumulated batches + terminal-batch findings + update ScanJob status — single txn at the end.
+
+**Trigger for Option C migration (R2 staging).** Promote findings persistence to R2-staged batch when **any** of the following is observed in production:
+1. Sustained `job_completed` event payloads exceeding **5MB** (operational metric on Pub/Sub message size).
+2. Pub/Sub message size approaching the Redis 32MB hard limit (early-warning at 16MB sustained).
+3. M9 AI pipeline shows ingest-time problems with batch sizes — e.g., deep Nuclei or Trivy scans producing 5000+ findings per job, where the Python consumer's per-event txn time exceeds 30s and starts blocking subsequent events.
+4. **Any production occurrence** of "ScanJob ghost-queued due to mid-sequence crash" (see Consequences below) — once is the trigger, not sustained.
+
+Migration shape (deferred): worker writes findings batch to R2 as JSONL blob (`findings/{org_id}/{scan_id}/{job_id}.jsonl`), `job_completed` event carries `findings_ref: "r2://..."` instead of inline `findings`, Python consumer downloads + streams insert. Decouples size + Redis pressure. ADR amendment + new ADR on landing.
+
+**Consequences:**
+- Single Python transaction per event — preserves ADR-013 sole-writer atomicity. ScanJob.status update + findings insert commit together.
+- No new Redis primitive surfaces. `shieldscan:completions` Pub/Sub channel grows in payload, not in primitive complexity.
+- Existing `CompletionsConsumer` shape (Task 4.2, lifespan-managed, session_factory DI) needs minimal extension: parse `findings` field, parse `event_seq`, accumulate when needed, persist on terminal batch. **Extension is Task 5.5 scope, not Task 5.1.**
+- Pub/Sub size pressure: 1000 findings × ~2KB/finding = ~2MB worst case. Comfortably under the 32MB Redis Pub/Sub default. If average finding size grows (rich evidence blobs, base64 screenshots), the trigger conditions activate before saturation.
+- M5 implementation note: the 1000-finding cap + sequencing pattern lands at **Task 5.5** (where the worker emits completion events). M5 itself emits zero findings (no tool runners until M6.1), so the cap is exercised structurally (via tests with synthetic findings) but not behaviorally until M6.1 Nuclei.
+- **Accumulator failure-mode.** Python CompletionsConsumer holds an in-memory accumulator keyed by `(scan_id, job_id)` for sequenced events. Accumulator survives only the single API process; on crash mid-sequence, partial findings are lost AND the `ScanJob.status` remains `running` (terminal event never lands). Recovery: M5+ ghost-queued janitor (Task 4.2 carry-forward) sweeps stuck ScanJob rows and either re-dispatches or marks failed. **Loss-rate threshold for triggering ADR-017→Option-C migration: any production occurrence of "ScanJob ghost-queued due to mid-sequence crash" — once is the trigger, not sustained.** Operationally: this is a sharp-edge case at MVP scale (deep scans + API restart simultaneously) but the recovery path must work.
+
+**Anti-patterns this prevents:**
+- **Go workers opening a PG connection "just for findings."** ADR-013 violation; this ADR closes the loophole.
+- **A separate `shieldscan:findings:{scan_id}` Stream.** Adds a third Redis primitive shape, third Python consumer codepath, third failure mode. Considered in M5 landscape (Option B); rejected as premature complexity.
+- **Per-finding events on the progress Stream.** Progress Stream is bounded `MAXLEN ~ 1000` for replay; finding events would either pollute replay or get evicted before consumption. Wrong primitive.
+
+**Alternatives considered and rejected:**
+- **Option B: separate `shieldscan:findings:{scan_id}` Stream.** Three Redis primitives instead of two. Streams give replay safety if the consumer is briefly down — but Pub/Sub is not lossy at MVP scale (single API process subscribed continuously) and the in-memory-accumulator crash-recovery concern is the same shape either way. Rejected as added complexity without proportionate benefit.
+- **Option C: R2 staging.** Decouples size + Redis pressure, but adds R2 round-trip latency to every job completion + R2 cleanup lifecycle + Python consumer download path. Right answer at scale; wrong answer at MVP. Deferred per trigger conditions above.
+- **Synchronous PG-write from Python during job dispatch (pre-allocate finding rows).** Doesn't work — findings are unknown until tools run.
+- **Worker writes to a worker-local sqlite + Python pulls on demand.** Operational nightmare; rejected outright.
+
+**Forcing functions:**
+- 1000-finding soft cap enforced in worker emitter code (Task 5.5):
+  ```go
+  // shieldscan-engine/internal/events/events.go
+  const MaxFindingsPerEvent = 1000  // ADR-017 soft cap
+  ```
+  Constant lives in `internal/events/` (created at Task 5.1) so 5.5's emitter and 5.5's tests both import the canonical value. Test pin (Task 5.5): `TestProcessor_SplitsLargeFindingBatches` synthesizes 2500 findings, asserts emitter produces 3 events with `event_seq.total = 3`.
+- Python CompletionsConsumer test pin (Task 5.5 cross-repo): `test_consumer_aggregates_sequenced_findings` synthesizes 3 sequenced events, asserts single-txn commit on terminal batch with all 2500 findings persisted.
+- Inline comment on the constant cites ADR-017 so engineers tempted to bump it find the trigger conditions first.
+- The Option C migration trigger metrics (5MB / 16MB / 30s consumer txn time / 1× ghost-queued occurrence) become Prometheus alerts at OPS milestone — not just doc text but operational signals that surface when the trigger actually fires.
+
+**Open follow-ups:**
+- **R2-staging ADR.** Drafted on trigger-fire; not preempted now.
+- **Schema versioning of `RawFinding`.** Worker and consumer must agree on field names. Either (a) shared schema doc (SPEC §7.3 + this ADR), (b) generated bindings, or (c) JSON-schema validation in consumer. Carry-forward to Task 5.5 scope proposal.
+
+**Cross-references:**
+- ADR-013 (Python sole writer) — the load-bearing constraint that forced this design.
+- IMPLEMENTATION-PLAN.md §5.5 lines 1742-1748 (stale `w.storage.StoreFindings` literal) — Task 5.5 implementation replaces this with publish-via-completions.
+- M4 commit `cf3b30a` (`app.services.completions_consumer`) — the consumer this ADR extends.
+- SPECIFICATION §7.3 (Job Completion schema) — patched in this commit to add `findings` + `event_seq` fields.
+- Task 4.2 DRIFT-LOG entry "long-lived background tasks need session_factory DI" — the consumer's session lifecycle pattern, reused for sequenced-event accumulator.
+
+### ADR-018: Plan §5.4 correction — Streams (not Pub/Sub) for progress events
+**Status:** Accepted (2026-05-01, Task 5.1)
+
+**Context:**
+This is a plan-correction ADR (precedent: ADR-014 itself was a plan correction over §4.1's Pub/Sub-only sketch). The plan literal at IMPLEMENTATION-PLAN.md §5.4 lines 1665-1677:
+
+```go
+// internal/redis/pubsub.go
+func (p *ProgressPublisher) Publish(ctx context.Context, eventType string, payload map[string]interface{}) error {
+    // ...
+    return p.client.Publish(ctx, "shieldscan:progress:"+p.scanID, data).Err()
+}
+```
+
+That's `client.Publish` — Pub/Sub. **Contradicts ADR-014 + SPECIFICATION §7.2** (already patched in M4 docs commit) which mandate Streams: `XADD shieldscan:progress:{scan_id} MAXLEN ~ 1000 * event <json>`. Plan was authored pre-ADR-014.
+
+The question: which side wins, plan §5.4 or ADR-014?
+
+**Decision:**
+**ADR-014 wins. Plan §5.4 progress publisher implementation is corrected to Streams.** Task 5.4 ships `XAdd` against `shieldscan:progress:{scan_id}` matching the M4 Python `ProgressSubscriber` (Task 4.1, commit `349fc5e`) exactly:
+
+```go
+// shieldscan-engine/internal/redis/stream.go (note: NOT pubsub.go for progress)
+const ProgressMaxLen = 1000  // matches Python ProgressSubscriber/XADD MAXLEN
+
+func (p *ProgressPublisher) Publish(ctx context.Context, eventType string, payload map[string]any) error {
+    payload["event_type"] = eventType
+    payload["scan_id"] = p.scanID
+    payload["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+    data, err := json.Marshal(payload)
+    if err != nil { return fmt.Errorf("progress marshal: %w", err) }
+    return p.client.XAdd(ctx, &redis.XAddArgs{
+        Stream: "shieldscan:progress:" + p.scanID,
+        MaxLen: ProgressMaxLen,
+        Approx: true,  // MAXLEN ~ 1000 (approximate trim — matches Python)
+        Values: map[string]any{"event": string(data)},
+    }).Err()
+}
+```
+
+Plan §5.4's filename `internal/redis/pubsub.go` is split: progress goes to `internal/redis/stream.go`; cancel-subscriber + completions-publisher remain in `internal/redis/pubsub.go` (those primitives stay Pub/Sub per ADR-014 mixed-primitive rationale).
+
+**Consequences:**
+- Multi-process API server SSE replay works correctly (the load-bearing reason for ADR-014).
+- M4 Python `ProgressSubscriber` (Task 4.1) reads what Go writes without modification — single contract surface in SPEC §7.2.
+- Plan §5.4 lines 1665-1677 stay as written (state-at-time discipline) but Task 5.4 implementation diverges per this ADR.
+- File layout split (`stream.go` for progress, `pubsub.go` for cancel/completions) makes the primitive boundary visible at the package level.
+
+**Anti-patterns this prevents:**
+- **"Quick fix" reverting to Pub/Sub** because XADD has slightly more ceremony than Publish. The forcing-function test below catches it immediately.
+- **Hybrid (XADD + Publish) for "compatibility"** — the M4 SSE consumer reads Streams; Pub/Sub publishes are simply unread. Wasteful + confusing.
+
+**Alternatives considered and rejected:**
+- **Pub/Sub as plan literal specifies.** Cannot satisfy SPEC §6.4 SSE replay on multi-process server (full reasoning in ADR-014). Disqualifying.
+- **Hybrid Streams+Pub/Sub.** Same rejection rationale as ADR-014 — two writes per event, two failure modes, no MVP benefit.
+- **Update plan §5.4 instead of overriding via ADR.** Would require editing the plan document literal; violates state-at-time discipline (precedent: ADR-014 also overrode plan §4.1 without editing the plan literal).
+
+**Forcing functions:**
+- Task 5.4 progress-publisher tests use `miniredis/v2` Streams primitives (XADD + XRANGE), not Pub/Sub. A regression switching to `client.Publish` would cause `XLen` reads to return zero — test failure is unmissable.
+- Cross-repo round-trip test at Task 5.4: M4 Python `ProgressSubscriber.replay()` reads what Go's `ProgressPublisher.Publish()` writes. Pub/Sub regression breaks this end-to-end.
+- File location: progress-publisher in `stream.go`, not `pubsub.go`. Engineer adding progress logic looks at `stream.go` first.
+
+**Open follow-ups:**
+- Plan §5.4 stays with stale Pub/Sub literal per state-at-time. Task 5.1 commit body adds explicit warning so 5.4 implementation kickoff doesn't trip on the literal.
+- Stream-key cleanup TTL — already a carry-forward from ADR-014 to OPS milestone. ADR-018 inherits.
+
+**Cross-references:**
+- ADR-014 (originating decision) — ADR-018 enforces it on the Go side.
+- SPECIFICATION §7.2 (already patched in M4 docs commit `8a21704`) — the canonical contract.
+- IMPLEMENTATION-PLAN.md §5.4 lines 1665-1677 (stale Pub/Sub literal) — left as written; this ADR overrides at implementation time.
+- M4 commit `349fc5e` (`app.services.scan_queue.ProgressSubscriber`) — the consumer this publisher mirrors.
+- ADR-016 (asynq drop) — same shape: post-plan ADR overrides plan literal, plan stays per state-at-time.
+
+### ADR-021: ctx-discipline — context propagation, goroutine lifecycle, subprocess control
+**Status:** Accepted (2026-05-01, Task 5.1)
+
+**Context:**
+Go's idiomatic primitive for cancellation, deadlines, and request-scoped values is `context.Context`. Cancel signals from M4 Python `CancelPublisher` (`shieldscan:cancel:{scan_id}` Pub/Sub) need to map to `ctx.Done()` in worker code. Tool subprocesses (Nuclei, Semgrep, etc., via M6 runners) must terminate when the scan is canceled — not just signal a cancel and let the subprocess finish naturally. Background goroutines spawned by the worker (cancel watcher, progress emitter, idempotency reaper) must exit when the worker shuts down — not survive across SIGTERM and leak into the next worker process.
+
+These are not optional Go conventions; they are load-bearing M5 architecture concerns. Patterns established at Task 5.5 (processor) recur across every M6 tool runner, every M7 Docker service runner, and M8's recon-first executor. **Setting the rule once at M5.1 prevents N tool integrations from each making slightly-different choices that drift into bug clusters.**
+
+**Decision:**
+**Mandatory ctx-discipline.** Three rules apply to all Go code in `shieldscan-engine`:
+
+**Rule 1 — Every blocking call takes ctx.** No `time.Sleep(d)` without `select { case <-ctx.Done(): ...; case <-time.After(d): ... }`. No `BRPOP` without `BRPopWithContext`. No HTTP request without `req = req.WithContext(ctx)`. No subprocess execution without `exec.CommandContext(ctx, ...)` (never `exec.Command(...)`).
+
+**Rule 2 — Every goroutine has a ctx-aware exit.** Every `go func() { ... }` spawned in worker code must either:
+- Receive a ctx parameter (typically `scanCtx` for job-scoped goroutines, root `workerCtx` for worker-lifetime goroutines).
+- `select` on `<-ctx.Done()` in any blocking loop.
+- Be wrapped in a structured-concurrency pattern (`errgroup.Group`, `sync.WaitGroup` + ctx-aware children).
+
+No fire-and-forget goroutines. No `go logSomething()` that survives shutdown.
+
+**Rule 3 — ctx flows down, never back up.** Goroutines may derive child contexts (`context.WithCancel`, `context.WithTimeout`) from their parent ctx and pass them deeper. Goroutines never construct `context.Background()` mid-call — that severs the cancellation chain.
+
+**Legitimate `context.Background()` locations:**
+- `main()` (process entry — root context)
+- Top-level test functions (test entry — fresh context per test)
+- Worker-lifetime services that intentionally outlive request-scoped ctxs (e.g., worker heartbeat, idempotency-reaper). These derive a worker-root ctx in `main()` and pass it down; they do NOT construct `context.Background()` at the goroutine spawn site — `main()` does it, then passes ctx down to the service constructor.
+
+**Anti-pattern:** spawning a goroutine in a request handler that uses `context.Background()` to "ensure it survives the request." This is always a bug. If the work needs to outlive the request, hand it to a worker-lifetime service via a channel; the service's worker-root ctx governs.
+
+Applied to M5 task surfaces:
+- **Task 5.5 processor:** `ProcessJob(ctx, job)` derives `scanCtx, cancel := context.WithCancel(ctx)`; cancel-watcher goroutine gets `scanCtx`; tool runner gets `scanCtx`; `defer cancel()` ensures cleanup on all return paths.
+- **Task 5.6 startup:** health-check polling loops `select` on `<-ctx.Done()` between attempts; service-wait timeouts derive from parent ctx, not constructed independently. Heartbeat goroutine receives `workerRootCtx` from `main()`, never constructs `context.Background()` itself.
+- **Task 5.4 BRPOP loop:** `BRPopWithContext` returns `redis.Nil` cleanly on ctx cancel; loop exits.
+- **M6 tool runners (every one):** subprocess via `exec.CommandContext(scanCtx, binary, args...)`; ctx cancel kills subprocess via SIGKILL after grace period.
+- **M7 Docker service runners:** HTTP polling loops respect `<-ctx.Done()`; long polls (`http.Client.Do(req.WithContext(ctx))`) cancel cleanly.
+
+**Per-worker job concurrency.** The BRPOP loop runs N concurrent jobs via `chan struct{}` semaphore; N is **env-var configurable** (`SHIELDSCAN_WORKER_CONCURRENCY`, default 5), not hard-coded — so M8 per-job tool-fanout can tune without restructuring 5.5. Config field lives in 5.1's `internal/config/config.go`; 5.5 reads it.
+
+**Consequences:**
+- Cancel propagation works correctly end-to-end: Python cancel endpoint (Task 4.5) → Pub/Sub `shieldscan:cancel:{scan_id}` → Go cancel-watcher → `cancel()` → ctx-aware tool runner → `exec.CommandContext` SIGKILLs subprocess. No code path can swallow cancel by accident.
+- Goroutines cannot leak. Worker shutdown is clean — `main`'s SIGTERM handler cancels root ctx; all derived ctxs cancel; all goroutines exit. `goleak.VerifyTestMain(m)` catches violations in tests.
+- Tests can simulate cancel deterministically: `ctx, cancel := context.WithCancel(context.Background()); cancel()` reproduces production cancel exactly.
+- Code review burden: every new goroutine needs to answer "what cancels this?" and "what waits for it?" Sets a clear bar for M6+ contributions.
+- Trade-off: more ceremony than Python's "let it leak; GC will sort it." Worth it because tool subprocesses don't get GC'd — a leaked goroutine watching a leaked subprocess is a real memory + CPU drain on the worker.
+
+**Anti-patterns this prevents:**
+- **Bare `time.Sleep`** in retry loops or health checks. Sleep ignores ctx; cancellation hangs until the sleep elapses.
+- **`go logProgress()` fire-and-forget.** Progress publishers (Task 5.4) are Stream-write goroutines. If they outlive job ctx, they may emit progress for a job that's already canceled — causing UI confusion ("scan canceled, but I see new progress events").
+- **`exec.Command` instead of `exec.CommandContext`.** Subprocess survives ctx cancel; worker process leaks subprocesses on cancel.
+- **`context.Background()` in tool runner code.** Severs cancel chain; test-time cancel cannot reach the runner.
+- **Deferring `cancel()` to "shutdown handler"** instead of inline. Misses the per-job lifetime; cancels accumulate until shutdown.
+
+**Alternatives considered and rejected:**
+- **Channel-only coordination (no ctx).** Pre-Go-1.7 idiom; legacy. Loses deadline semantics + the standard-library convention every Go HTTP/DB/exec library expects. Rejected.
+- **Per-package cancellation managers** (e.g., a package-level `done chan struct{}`). Doesn't compose across packages; tool runners would need their own cancel mechanism plus ctx; double-state-machine bug surface. Rejected.
+- **Manual goroutine accounting** (every goroutine increments/decrements a counter; shutdown waits for zero). Ad-hoc; reinvents `sync.WaitGroup` poorly; doesn't catch leaks at test time. Rejected; use WaitGroup or errgroup directly when structure is needed.
+- **`golang.org/x/sync/errgroup` everywhere.** Considered as a stronger forcing function than ctx-only. Adds a dep + idiom for marginal ergonomic gain over plain ctx + WaitGroup at M5 scale. Defer adoption to M8's recon-first executor where parallel-tool fan-out makes errgroup's structured-concurrency value clearer.
+
+**Forcing functions:**
+- **`goleak.VerifyTestMain(m)`** in every test package that spawns goroutines. Goroutine leaks fail the test suite at runtime — not silently accumulate. Added in Checkpoint 4 commit `39e1e5e` to VERSIONS.md §2.4 (`go.uber.org/goleak v1.3.0`).
+- **`go vet`** runs `lostcancel` analyzer by default — catches `cancel := context.WithCancel(...)` without a `defer cancel()` or unconditional call. Wired into Task 5.1's CI workflow `.github/workflows/engine.yml`.
+- **`golangci-lint`** with `containedctx` + `noctx` linters enabled — flags struct fields holding ctx (anti-pattern) and HTTP requests built without ctx. Lands in Task 5.1 lint config.
+- **Engine `CLAUDE.md` gotchas section** (Task 5.1) explicitly documents Rules 1-3 with example violations + corrections.
+
+**Open follow-ups:**
+- **errgroup adoption at M8** if recon-first parallel-tool fan-out shows that plain WaitGroup + ctx is insufficient for error aggregation across N parallel tool calls.
+- **Subprocess SIGKILL grace period.** Some tools may benefit from SIGTERM-first with a 2-3s grace period for clean shutdown. Defer to M6.1 Nuclei integration.
+- **Subprocess output streaming under cancel.** When a tool is canceled mid-run, partial stdout may be useful (some findings already emitted). Default: discard. Override per-tool if a runner explicitly opts in. Decide at M6.1.
+
+**Cross-references:**
+- IMPLEMENTATION-PLAN.md §5.5 lines 1710-1733 (`ProcessJob` skeleton with `scanCtx`) — already ctx-aware in plan literal; ADR-021 formalizes the discipline beyond §5.5 to all engine code.
+- M4 commit `cf3b30a` (Python `CancelPublisher`) — the cancel signal source this discipline subscribes to via Pub/Sub.
+- SPECIFICATION §7.4 (cancel channel format).
+- Task 5.4 (cancel-subscriber landing) + Task 5.5 (processor).
+- M6 tasks 6.1-6.7 (every tool runner inherits the discipline via `exec.CommandContext`).
+- M7 tasks 7.1-7.6 (every Docker service runner inherits via `req.WithContext`).
+- VERSIONS.md §2.4 `goleak v1.3.0` (forcing function dep) — Checkpoint 4 commit `39e1e5e`.
+
+> **ADR numbering note.** §13 jumps from ADR-018 to ADR-021. ADR-019 (cancel Pub/Sub confirmation) and ADR-020 (worker concurrency model) numbers are reserved — not missing. Both decisions are currently captured as DRIFT-LOG entries; promote to full ADR with the reserved number when the underlying decision becomes load-bearing across multiple tasks.
 
 ---
 

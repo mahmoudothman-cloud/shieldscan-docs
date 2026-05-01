@@ -210,6 +210,57 @@ API Keys (3), Mobile Scanning (1), Reports (5), Compliance (3), Billing (6), Too
 
 **Historical entries unchanged.** DRIFT-LOG entries that quote the old subsection counts (lines 175, 267, 494–496, 636) are historical records and remain as written; they document state-at-time, not current state.
 
+### 2026-05-01 — Task 5.1 docs sweep (Commit 1 of 2): four ADRs land + SPEC patches
+
+**Architectural foundation for M5.** Task 5.1's docs commit lands the four ADRs (016/017/018/021) drafted during the M4→M5 transition Checkpoint 3 landscape pass + scope-proposal review. SPEC §13 grows from ADR-014 → ADR-021 with intentional 019/020 gap (see numbering note below).
+
+**Refinements folded into ADR text (vs the scope-proposal drafts):**
+- **ADR-017 Refinement 1.** Accumulator failure-mode promoted from "open follow-up" to **explicit Consequence** — Python CompletionsConsumer's in-memory accumulator for sequenced events is a load-bearing M5+M6 concern, not a deferred concern. Recovery path: M5+ ghost-queued janitor (Task 4.2 carry-forward). Loss-rate threshold for triggering Option-C migration: **any production occurrence** of "ScanJob ghost-queued due to mid-sequence crash" — once is the trigger, not sustained. The "once is the trigger" framing changes operational posture.
+- **ADR-021 Refinement 2.** Rule 3 carves out **legitimate `context.Background()` locations**: `main()`, top-level test functions, AND worker-lifetime services that intentionally outlive request-scoped ctxs (heartbeat, idempotency-reaper). These derive worker-root ctx in `main()` and pass it down — they do NOT construct `context.Background()` at the goroutine spawn site. Without this precision, Task 5.6's heartbeat logic would be misread as Rule 3 violation.
+
+**SPEC patches in this commit:**
+- §3.3 Tech Stack line: drop "asynq" from Scan Engine row (ADR-016).
+- §7.3 `job_completed` schema: add `findings` array + `event_seq` object with full sequencing semantics documented inline (ADR-017).
+- §13: append ADR-016, ADR-017, ADR-018, ADR-021 in numerical order. ADR-numbering note inline: §13 jumps from ADR-018 to ADR-021; ADR-019 (cancel Pub/Sub confirmation) and ADR-020 (worker concurrency model) numbers are reserved for promotion-on-trigger from DRIFT-LOG entries — not missing.
+
+**Plan patches in this commit:**
+- IMPLEMENTATION-PLAN.md preamble line 9: drop "asynq" from stack list. Plan §5.1 lines 1510-1525 stale go.mod literal (go 1.22, asynq v0.24.1) **left as written** per state-at-time discipline; Task 5.1 implementation derives go.mod from VERSIONS.md per CLAUDE.md hierarchy.
+
+**VERSIONS.md patch in this commit (H.5 reversal — see separate entry below).**
+
+**Commit 2 (engine bootstrap) deferred to next session.** Go toolchain not installed in current session. Per CLAUDE.md Rule 1 (TDD mandatory: failing test → confirm fail → implement → confirm pass → commit), forcing-function tests cannot be honestly committed without compile + test verification. Honest engineering judgment over "ship and hope" — Task 4.4 SSE precedent applies. User installs Go 1.26.2 + golangci-lint v1.62.0 between sessions; Commit 2 lands next session with full TDD per scope-proposal §C.2 substep list.
+
+**Forcing-function commitments pinned in SPEC §13** (carry into Commit 2 for enforcement):
+1. ADR-013: `cmd/worker/...` build target excludes `lib/pq` / `jackc/pgx` / `database/sql`. Buildguard test `TestWorkerBinary_DoesNotImportPostgresDriver`.
+2. ADR-016: `go.mod` excludes `hibiken/asynq`. Buildguard test `TestGoMod_ExcludesAsynq`.
+3. ADR-017: `internal/events/` package owns `MaxFindingsPerEvent = 1000` constant + `EventSeq` struct. Tests verify constant value + DisallowUnknownFields invariant.
+4. ADR-018: progress publisher in `internal/redis/stream.go` uses `XAdd`, NOT `Publish`. (Lands at Task 5.4; 5.1 establishes file-layout convention.)
+5. ADR-021: `goleak.VerifyTestMain(m)` template in buildguard package; `go vet` lostcancel + golangci-lint `containedctx`/`noctx` in CI.
+
+### 2026-05-01 — Task 5.1: lib/pq removal (Checkpoint 4 reversal)
+
+**Reversal of Checkpoint 4 scope-comment approach.** Checkpoint 4 commit `39e1e5e` added a scope-only comment for `lib/pq v1.10.9` reserving it for future `cmd/admin/` use, with the rationale that ADR-013's buildguard test would prevent `cmd/worker/` misuse regardless of what `cmd/admin/` did. **Task 5.1 reverses this:** remove `lib/pq` from VERSIONS.md §2.4 and from the engine's go.mod entirely.
+
+**Reason:** `go mod tidy` strips unused dependencies from `go.mod`. With no current binary (`cmd/worker/` excludes per ADR-013, `cmd/admin/` doesn't exist yet) importing `lib/pq`, the next `go mod tidy` run after engine bootstrap would remove the line — making the scope-comment approach unstable. Either we add a `// +build never`-tagged stub import to keep tidy from stripping (anti-pattern), or we accept that `lib/pq` doesn't belong in `go.mod` until a binary actually needs it.
+
+**The buildguard test is the durable forcing function.** `TestWorkerBinary_DoesNotImportPostgresDriver` excludes `lib/pq` / `jackc/pgx` / `database/sql` from `cmd/worker/...`'s deps regardless of whether those drivers exist anywhere else in the module. When `cmd/admin/` is created (future task — likely M9+ or OPS milestone), it adds `lib/pq` (or `pgx`) back at that time. The buildguard test continues to enforce the worker exclusion; the test does not assert the driver is absent globally, only that `cmd/worker/` doesn't transitively pull it.
+
+**Why the change of mind is fine.** Checkpoint 4's decision was reasonable given what was known at the time (we hadn't yet considered the `go mod tidy` interaction). Scope-proposal-time reflection surfaced the simpler approach. This is the kind of principled reversal the architectural-commitments preamble pattern is designed to surface — better to catch at scope time than after committing the engine repo with an unstable convention.
+
+**Action items closed in this commit:**
+- VERSIONS.md §2.4: `lib/pq v1.10.9` line removed; replaced with a comment block explaining the intentional absence + buildguard-test reasoning + reservation policy.
+- Engine `go.mod` (Commit 2 next session): authored without `lib/pq`.
+
+### 2026-05-01 — ADR numbering reservation: 019 + 020 intentional gap
+
+**Pin.** SPECIFICATION §13 jumps from ADR-018 to ADR-021. ADR-019 and ADR-020 numbers are reserved for future promotion-on-trigger from DRIFT-LOG entries — not missing.
+
+**Reservations:**
+- **ADR-019 (cancel Pub/Sub confirmation).** SPEC §7.4 + plan agree on cancel channel `shieldscan:cancel:{scan_id}` Pub/Sub primitive. M5 landscape pass surfaced this as ADR-candidate but it's confirmation, not novel decision. Stays as DRIFT-LOG-only unless M5+ work surfaces a need to revisit (e.g., if cancel propagation latency becomes a load-bearing concern requiring Streams-with-replay semantics).
+- **ADR-020 (worker concurrency model).** TOOL-ARCHITECTURE.md §10.3 specifies per-job tool-fanout (5 tools concurrent for one scan); SPEC §11 specifies per-worker job concurrency (5 jobs concurrent on one worker). M5.5 ships per-worker BRPOP-loop concurrency only (env-var configurable via `SHIELDSCAN_WORKER_CONCURRENCY`, default 5). M8's recon-first executor ships per-job tool-fanout. The model decision is currently captured implicitly in those task scopes; promote to ADR-020 if M8.1 surfaces a load-bearing trade-off (e.g., total goroutine accounting on 8GB RAM workers).
+
+**Reservation discipline:** when a DRIFT-LOG entry's decision becomes load-bearing across multiple tasks, promote to full ADR with the reserved number. This keeps SPEC §13 ADR numbering meaningful (each ADR represents a load-bearing architectural commitment) while DRIFT-LOG captures the broader stream of design decisions including confirmations and deferrals.
+
 ### 2026-05-01 — Checkpoint 4 (VERSIONS sync before M5): asynq dropped + test deps added
 
 **Pre-M5 docs sweep.** Ahead of Task 5.1 scaffolding the `shieldscan-engine` Go repo, VERSIONS.md §2.4 was reconciled with the four ADRs landing at Task 5.1's architectural-commitments preamble (ADR-016 asynq drop · ADR-017 findings-path · ADR-018 Streams correction · ADR-021 ctx discipline).

@@ -109,10 +109,14 @@ require (
     github.com/redis/go-redis/v9 v9.7.0
     github.com/docker/docker v27.3.1+incompatible
 
-    // lib/pq v1.10.9 — repo-scope only; cmd/worker/ MUST NOT
-    // import (ADR-013 forcing function). Reserved for future
-    // admin tooling under cmd/admin/.
-    github.com/lib/pq v1.10.9
+    // PostgreSQL driver intentionally absent. Workers MUST NOT
+    // connect to PG (ADR-013 forcing function). When future
+    // admin tooling under cmd/admin/ requires DB access, add
+    // lib/pq or jackc/pgx at that time. The buildguard test
+    // TestWorkerBinary_DoesNotImportPostgresDriver ensures
+    // cmd/worker/'s deps remain DB-driver-free regardless of
+    // what other binaries in the repo import. (See Task 5.1
+    // DRIFT-LOG entry for Checkpoint 4 reversal rationale.)
 
     github.com/aws/aws-sdk-go-v2 v1.32.0
     github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
