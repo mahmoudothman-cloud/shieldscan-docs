@@ -6,7 +6,7 @@
 
 **Architecture:** FastAPI (Python) API + AI layer, Go scan workers, PostgreSQL with RLS, Redis queues + pub/sub, Qdrant vector dedup, React + TypeScript dashboard, hybrid tool deployment (native binaries + persistent Docker services).
 
-**Tech Stack:** FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2, React 18, TypeScript, Tailwind, Vite, Go 1.22, Nuclei SDK, Docker SDK, MobSF REST API, PostgreSQL 16, Redis 7, Qdrant, Claude API, OpenAI Embeddings, Stripe, Cloudflare R2.
+**Tech Stack:** FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2, React 18, TypeScript, Tailwind, Vite, Go 1.22, Nuclei CLI, Docker SDK, MobSF REST API, PostgreSQL 16, Redis 7, Qdrant, Claude API, OpenAI Embeddings, Stripe, Cloudflare R2.
 
 **Companion docs:** `SPECIFICATION.md`, `TOOL-ARCHITECTURE.md`, `OPERATIONS-RUNBOOK.md`.
 

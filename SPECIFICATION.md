@@ -42,7 +42,7 @@
 
 **Tech Stack:**
 - **API:** FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2, PostgreSQL 16, Redis 7, Qdrant
-- **Scan Engine:** Go 1.22, Nuclei SDK, Docker SDK, MobSF REST API
+- **Scan Engine:** Go 1.22, Nuclei CLI, Docker SDK, MobSF REST API
 - **Frontend:** React 18, TypeScript, Tailwind CSS, Vite, TanStack Query
 - **AI:** Claude API (Opus/Sonnet/Haiku), OpenAI Embeddings
 - **Infrastructure:** Cloudflare R2, Stripe, SendGrid/Resend
