@@ -526,14 +526,15 @@ func parseNucleiOutput(out []byte) ([]RawFinding, error) {
 **Category:** SAST
 **Invocation:**
 ```bash
-semgrep --config=auto \
-        --json \
-        --quiet \
-        --timeout=120 \
-        /path/to/source
+semgrep scan --config=p/default \
+             --json \
+             --quiet \
+             --metrics=off \
+             --timeout=120 \
+             /path/to/source
 ```
 
-**Parser logic:** Maps Semgrep rule IDs to OWASP categories. Extracts `check_id`, `path`, `start.line`, `extra.message`, `extra.severity`, `extra.metadata.cwe`.
+**Parser logic:** Maps Semgrep rule IDs to OWASP categories. Extracts `check_id`, `path`, `start.line`, `extra.message`, `extra.severity`, `extra.metadata.cwe`, `extra.metadata.owasp[0]`.
 
 ### 6.3 Subfinder
 
