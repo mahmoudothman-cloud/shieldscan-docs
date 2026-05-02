@@ -644,10 +644,10 @@ gitleaks detect --source /path/to/repo \
 **Category:** Infrastructure
 **Invocation:**
 ```bash
-nikto -h https://target.com -nointeractive -Format txt -ask no
+nikto -h target.com:443 -Format xml -ask no -nointeractive
 ```
 
-**Output format:** Text (one finding per line starting with `+`).
+**Output format:** XML (`-Format xml` to stdout). Stable across Nikto 2.x; preferred over `-Format txt` for parser reliability.
 
 **Parser extracts:** Web server misconfigs, outdated software versions, directory indexing, dangerous files.
 
@@ -659,10 +659,11 @@ nikto -h https://target.com -nointeractive -Format txt -ask no
 ```bash
 wapiti -u https://target.com \
        -f json \
-       -o /dev/stdout \
-       --no-bugreport \
+       -o /tmp/wapiti-output.json \
        --flush-session
 ```
+
+**Note:** `-o /dev/stdout` corrupts JSON (Wapiti bug; verified at M6.6 pre-prep). Engine uses NativeRunner OutputFile mode (ADR-023 2nd consumer) to mint a per-Run tempfile via `os.CreateTemp`.
 
 **Covers:** XSS, CSRF, XXE, file traversal, command injection, SSRF.
 
@@ -672,8 +673,10 @@ wapiti -u https://target.com \
 **Category:** API
 **Invocation:**
 ```bash
-corstest -u https://api.target.com
+python3 corstest.py <urlfile> -v
 ```
+
+CORStest takes a positional URL-list **file**, not a `-u <url>` flag. Engine BuildArgs mints a per-Run tempfile containing the target URL.
 
 **Detects:** Dangerous CORS configurations (wildcard with credentials, reflection, null origin acceptance).
 
