@@ -588,7 +588,12 @@ staging.example.com" | httpx -silent -json -status-code -tech-detect
 **Category:** SSL/TLS
 **Invocation:**
 ```bash
-sslyze --json_out=- --regular target.com
+sslyze --json_out=- \
+       --certinfo \
+       --heartbleed --robot --openssl_ccs --reneg \
+       --sslv2 --sslv3 --tlsv1 --tlsv1_1 --tlsv1_2 --tlsv1_3 \
+       --compression --fallback --ems \
+       target.com:443
 ```
 
 **What it finds:**
