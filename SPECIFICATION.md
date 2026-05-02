@@ -1639,6 +1639,58 @@ Applied to M5 task surfaces:
 - VERSIONS.md §2.4 `goleak v1.3.0` (forcing function dep) — Checkpoint 4 commit `39e1e5e`.
 
 > **ADR numbering note.** §13 jumps from ADR-018 to ADR-021. ADR-019 (cancel Pub/Sub confirmation) and ADR-020 (worker concurrency model) numbers are reserved — not missing. Both decisions are currently captured as DRIFT-LOG entries; promote to full ADR with the reserved number when the underlying decision becomes load-bearing across multiple tasks.
+>
+> ADR-022 (recon-as-pre-scan-helpers) is reserved pending Task 6.3 implementation; tracked in `shieldscan-engine/DRIFT-LOG.md` as a candidate per the M6 landscape pass (Finding 2).
+
+### ADR-023: Extend NativeRunner with file-output mode for tools that don't write findings to stdout
+
+**Status:** Accepted at M6.7 (2026-05-02).
+
+**Context.** OWASP Dependency-Check writes findings to a file via `--out <path>` rather than stdout (which carries logging chatter). NativeRunner (5.2) is stdout-only — `BuildArgs` returns args, the subprocess writes to stdout, `ParseOutput` receives the bytes. Dep-Check breaks this assumption.
+
+**Decision.** Add three fields to `NativeRunner`:
+
+- `OutputFile bool` — opt into file-output mode.
+- `OutputFilePlaceholder string` — literal substring in BuildArgs args replaced with per-Run tempfile path.
+- `ParseOutputFile func(outputFilePath string) ([]events.RawFinding, error)` — file-output variant of ParseOutput.
+
+Per Run, when `OutputFile=true`, NativeRunner creates a unique tempfile via `os.CreateTemp` (with `os.TempDir()` honoring `TMPDIR`), substitutes its path into BuildArgs's args slice (replacing every occurrence of `OutputFilePlaceholder`), invokes the subprocess, calls `ParseOutputFile` with the path, and removes the tempfile via `defer` regardless of success/failure.
+
+Stdout content is discarded in file-output mode (typical file-output tool's stdout is logging chatter, not findings).
+
+**Rationale.**
+
+Hack alternatives all evaluated and rejected at M6.7 pre-prep:
+
+| Alternative | Why rejected |
+|---|---|
+| Closure-shared mutable state | Concurrency-unsafe under concurrent Run() calls on the same runner |
+| Known-fixed path (e.g., `/tmp/depcheck.json`) | Cross-cuts NativeRunner contract; needs scan/worker context injection |
+| Per-PID nanosec timestamp | Race-prone if Run() called twice within same nanosec |
+| Per-Run factory | NativeRunner is held in Registry as singleton; no per-call factory |
+| Filename grep from stdout | Brittle; depends on tool verbosity flags |
+
+Cost of NOT promoting (race conditions in production, debugging burden) exceeds cost of premature abstraction (~50 LoC framework + 5 framework tests + this ADR). Three-instance threshold is OVERRIDDEN per the asymmetric-cost reasoning documented in `shieldscan-engine/DEVELOPMENT-PATTERNS.md` preamble. Future readers should understand: the three-instance heuristic is not a universal rule; it is overridable when the cost asymmetry inverts.
+
+**Consequences.**
+
+Positive:
+- Dep-Check ships at M6.7 without race-prone hacks.
+- Future file-output tools (M7 Trivy filesystem-scan output, etc.) inherit cleanly.
+- Framework abstraction confined to 3 fields + 1 lifecycle hook in `Run()`.
+
+Negative:
+- NativeRunner's contract is now bimodal (stdout-mode default, OutputFile-mode opt-in). Slight cognitive cost for new readers.
+- Tempfile lifecycle adds I/O overhead per Run (one `CreateTemp` + one `Remove`). Negligible vs scan duration (Dep-Check scans take 5-10 minutes; tempfile I/O is sub-millisecond).
+
+**Alternatives considered (and rejected).** See Rationale hack-alternatives table above.
+
+**Triggers to revisit.**
+
+- **5+ tools using OutputFile mode.** Consider a separate `FileOutputRunner` type vs continued NativeRunner extension; bimodal contract may grow into multiple narrow types.
+- **Tools that write to stderr** (not stdout, not file) — distinct shape; would need separate accommodation rather than extending OutputFile.
+- **Performance regression** (>5% scan-duration overhead from tempfile I/O at high throughput / very-many-target portfolios). At that point, evaluate in-memory pipe alternatives or reuse a persistent tempfile across Runs (still concurrency-safe via locking).
+- **Tempfile-location operator concern** (e.g., ops needs tempfiles on tmpfs for performance, or persistent disk for forensics). At that point, add `SHIELDSCAN_TMPDIR` env var; for now, `os.TempDir()` honors stdlib + `TMPDIR` transparently.
 
 ---
 
