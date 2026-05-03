@@ -814,7 +814,49 @@ Channel: `shieldscan:completions`
 }
 ```
 
-**Findings persistence (per ADR-017).** The `findings` array carries the RawFinding rows produced by the engine for this job; the Python `CompletionsConsumer` (M4 Task 4.2) inserts them in the same transaction as the `ScanJob.status` update. `findings` is REQUIRED on terminal events (`status` ∈ {`completed`, `partial`}) and absent on `failed`/`canceled` events.
+**RawFinding wire shape (canonical).** Each entry in the `findings` array is a `RawFinding` object. The canonical source of truth for the field set is the Go struct `events.RawFinding` in `shieldscan-engine/internal/events/events.go` and its Python mirror `app.models.raw_findings.RawFinding` in `shieldscan-api`. The two MUST stay in sync; ADR-017's "Schema versioning of `RawFinding`" follow-up identifies SPEC §7.3 as the shared schema doc, and ADR-024 establishes the workflow for synchronized cross-repo extensions.
+
+The full per-field listing as of M6-close-followup (post-ADR-024):
+
+| Group | Field | JSON name | Type | Required | Notes |
+|---|---|---|---|---|---|
+| Identity | ToolName | `tool_name` | string | yes | e.g., `"nuclei"`, `"semgrep"` |
+| Identity | EngineCategory | `engine_category` | string | yes | enum per §5.3 (dast, sast, sca, ...) |
+| Identity | ScanID | `scan_id` | string | optional | populated by processor; runner leaves empty |
+| Identity | OrgID | `org_id` | string | optional | populated by processor |
+| Classification | Title | `title` | string | yes | short human label |
+| Classification | Description | `description` | string | optional | longer context |
+| Classification | Severity | `severity` | string | yes | enum: critical/high/medium/low/info |
+| Classification | FindingType | `finding_type` | string | yes | tool-specific (e.g., `"xss"`, `"hardcoded-secret"`) |
+| Classification | CWEID | `cwe_id` | string | optional | e.g., `"CWE-89"` (primary CWE; multi-CWE → AdditionalCWEs) |
+| Classification | OWASP | `owasp` | string | optional | e.g., `"A03:2021"` |
+| Classification | CVSSScore | `cvss_score` | float | optional | numeric severity 0.0–10.0 |
+| Evidence (web) | TargetURL | `target_url` | string | optional | DAST/API tools |
+| Evidence (web) | Parameter | `parameter` | string | optional | DAST/API tools |
+| Evidence (web) | Payload | `payload` | string | optional | DAST/API tools |
+| Evidence (web) | Request | `request` | string | optional | 4 KB truncated by tool |
+| Evidence (web) | Response | `response` | string | optional | DAST/API tools |
+| Evidence (source) | CodeFile | `code_file` | string | optional | SAST/SCA tools |
+| Evidence (source) | CodeLine | `code_line` | int | optional | SAST/SCA tools |
+| Evidence (source) | CodeSnippet | `code_snippet` | string | optional | SAST/SCA tools |
+| Evidence (mobile) | MobileOS | `mobile_os` | string | optional | enum: android/ios |
+| Evidence (mobile) | Permission | `permission` | string | optional | MobSF |
+| Evidence (mobile) | ComponentName | `component_name` | string | optional | MobSF |
+| Evidence (SSL) | CipherSuite | `cipher_suite` | string | optional | SSLyze |
+| Evidence (SSL) | CertSubject | `cert_subject` | string | optional | SSLyze |
+| Categorical (ADR-024) | References | `references` | []string | optional | URLs / advisory identifiers (M6.4 trigger; landed M6-followup) |
+| Categorical (ADR-024) | Tags | `tags` | []string | optional | fine-grained tags; MUST NOT duplicate `engine_category` |
+| Categorical (ADR-024) | CVSSVector | `cvss_vector` | string | optional | canonical CVSS 3.1 vector (`"CVSS:3.1/AV:N/..."`) |
+| Categorical (ADR-024) | AdditionalCWEs | `additional_cwes` | []string | optional | secondary CWE strings beyond primary `cwe_id` |
+| Metadata | RawOutputRef | `raw_output_ref` | string | optional | future R2-staged output reference |
+| Metadata | DiscoveredAt | `discovered_at` | string | optional | RFC3339 timestamp |
+| Metadata | Fingerprint | `fingerprint` | string | optional | SHA-256 deterministic dedup key |
+
+All fields are encoded with `omitempty` on the Go side and `Optional` on the Python side; absent/empty values do not appear on the wire and do not break decoding. Both sides enforce strict-schema validation (Go: `DisallowUnknownFields`; Python: `extra="forbid"` per ADR-017's M4 Pydantic discipline transfer) — adding a new field requires synchronized extension on both sides per ADR-024's coordination workflow.
+
+**Findings persistence (per ADR-017).** The `findings` array carries the RawFinding rows produced by the engine for this job; the Python `CompletionsConsumer` (M4 Task 4.2) is responsible for inserting them in the same transaction as the `ScanJob.status` update. `findings` is REQUIRED on terminal events (`status` ∈ {`completed`, `partial`}) and absent on `failed`/`canceled` events.
+
+> **Implementation status (M6-close-followup, ADR-024).** As of the M6-close-followup landing the SQLAlchemy `RawFinding` model has all columns required to persist the wire shape above (including the four ADR-024 categorical fields), but `CompletionsConsumer` does not yet insert `findings[]` rows — at M4 it was scoped to `ScanJob.status` + `ScanJob.finding_count` updates only. Findings ingest (Pydantic schema + bulk-insert path + ingest tests) is a separate deliverable tracked under ADR-024's "Triggers to revisit". The columns-ready posture means the schema change can land without churn when the ingest path is implemented.
 
 **Sequencing for large batches (per ADR-017).** The engine caps each event at **1000 findings** (`MaxFindingsPerEvent`). Jobs producing >1000 findings emit multiple `job_completed` events with `event_seq.total > 1`:
 
@@ -1763,6 +1805,164 @@ Negative:
 - **Tools that write to stderr** (not stdout, not file) — distinct shape; would need separate accommodation rather than extending OutputFile.
 - **Performance regression** (>5% scan-duration overhead from tempfile I/O at high throughput / very-many-target portfolios). At that point, evaluate in-memory pipe alternatives or reuse a persistent tempfile across Runs (still concurrency-safe via locking).
 - **Tempfile-location operator concern** (e.g., ops needs tempfiles on tmpfs for performance, or persistent disk for forensics). At that point, add `SHIELDSCAN_TMPDIR` env var; for now, `os.TempDir()` honors stdlib + `TMPDIR` transparently.
+
+### ADR-024: RawFinding schema extension — References, Tags, CVSSVector, AdditionalCWEs
+
+**Status:** Accepted at M6-close-followup (2026-05-03).
+
+**Context.**
+The reductions counter — tracking M6 tools whose parsers fold or drop fields from upstream tool output — fired its trigger at M6.4 (SSLyze) when 4 of 5 implemented tools showed reductions. Per the landscape decision at 6.4, schema extension was deferred to M6 close (Path A in the M6.4 scope proposal). At M6 close (post-6.8), the counter sits at **8/9 tools (89%) with reductions**, totalling ~38 folded/dropped fields across the corpus.
+
+The reductions are not problems in themselves — folding is legitimate parser strategy when the canonical schema lacks appropriate slots. The decision is whether to extend the canonical RawFinding schema with new categorical fields, which categorical patterns warrant first-class fields, and how those fields couple to the M9 AI pipeline that consumes RawFindings.
+
+Per ADR-017's "Schema versioning of `RawFinding`" follow-up: SPEC §7.3 is the canonical shared schema doc between Engine (Go) and Python orchestrator. Extension requires synchronized changes across the Engine struct, Python SQLAlchemy model, Python Pydantic schema (when it lands), Alembic migration, and wire-format fixtures.
+
+A structured brainstorming session preceded this ADR (design doc archived at `plans/2026-05-03-spec73-schema-extension-design.md`). The brainstorming locked moderate scope (4 fields) over conservative (2) and comprehensive (6) options. The 4 fields capture the highest-value categorical patterns; comprehensive scope's `Evidence` flexible-map field was rejected as anti-pattern (dumping ground for inconsistent per-tool usage).
+
+A Phase 0 verification pass before implementation surfaced one load-bearing deviation from the design doc — see "Python ingest scope" subsection below.
+
+**Decision.**
+Extend `events.RawFinding` (Go canonical) and the `app.models.raw_findings.RawFinding` SQLAlchemy mirror with **four new optional fields**:
+
+```go
+// internal/events/events.go
+type RawFinding struct {
+    // ... existing fields ...
+    References     []string `json:"references,omitempty"`
+    Tags           []string `json:"tags,omitempty"`
+    CVSSVector     string   `json:"cvss_vector,omitempty"`
+    AdditionalCWEs []string `json:"additional_cwes,omitempty"`
+}
+```
+
+Field semantics:
+
+- **References** — array of URLs / advisory identifiers (CVE links, remediation guidelines, OWASP WSTG identifiers, vendor advisories). Free-form strings; no URL validation at SPEC §7.3 time.
+- **Tags** — array of fine-grained categorical tags. Distinct from existing `engine_category` (broad: dast/sast/sca/etc., 13 enum values per §5.3). Tags is finer-grained per-tool sub-categorization. **MUST NOT duplicate `engine_category` values** — parsers emitting tags that overlap engine_category should drop them.
+- **CVSSVector** — canonical CVSS 3.1 vector string (`"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"`). Stored as-emitted; no parsing into 8-dimension subfields at SPEC §7.3 time. Parsing into subfields is reserved for M9 §8.3 implementation if the algorithm evolves to consume the vector directly.
+- **AdditionalCWEs** — array of CWE identifier strings beyond the primary `CWEID` field (`["CWE-89", "CWE-20"]`). Empty/absent when finding is single-CWE.
+
+All four fields are `omitempty` on the Go side and Optional on the Python side; backward-compatible with existing engine emissions.
+
+**Python ingest scope (Phase 0 deviation, load-bearing acknowledgment).**
+
+Phase 0 verification surfaced that the Python ingest path the original design doc assumed does not exist:
+
+- The SQLAlchemy `RawFinding` model exists at `app.models.raw_findings.RawFinding`.
+- **No Pydantic schema for RawFinding ingest exists** at `app.schemas.raw_findings`.
+- **`CompletionsConsumer` does not insert `findings[]` rows.** At M4 it was scoped to `ScanJob.status` + `ScanJob.finding_count` counter updates only; the 287-line consumer never references `RawFinding` or the `findings` array.
+
+This ADR adopts **Path A**: extend the SQLAlchemy model + add the Alembic migration in this commit, and defer Pydantic schema + ingest-path implementation to a separate findings-ingest task (likely at M4-completion or pulled forward from M9). The columns-ready posture is honest about state — the Engine ships emissions for consumers that don't yet exist (the same architectural pattern as M5/M6 wire-format work that preceded this ADR).
+
+Two paths were considered and rejected:
+- **Path B (fold ingest into this task):** Conflates SPEC §7.3 followup with a findings-ingest M4-completion deliverable; the latter is cross-cutting (RLS via `app.current_org_id` + transaction discipline + bulk insert + idempotency) and roughly doubles task size.
+- **Path C (defer entire task until ingest exists):** Wastes immediate value: the Engine retrofit + Docs commit ship a better wire format right now (32% of M6 folds rescued), and the load-bearing M9 §8.2 forward-pin (below) lands earlier rather than later in the project corpus.
+
+**Rationale.**
+
+Three scope alternatives considered and rejected (per the design doc):
+
+| Alternative | Why rejected |
+|---|---|
+| **Conservative (2 fields):** References + Tags only | Defers CVSSVector + AdditionalCWEs to a future task. AdditionalCWEs is load-bearing for §8.2 correlation; deferring delays the M9 forward-pin. |
+| **Comprehensive (6 fields including Evidence map):** | The Evidence map is a flexible-map anti-pattern: tends to accumulate inconsistent usage across tools (one stores `"hash"`, another `"sha256"`, M9 has to handle both). Better to add specific fields when patterns warrant than to preempt with a dumping ground. |
+| **Status quo (no extension):** | 38 folded/dropped fields across M6 is the trigger fire point. Continuing without extension means M7+ tools accumulate folds against the current schema; cleanup cost grows non-linearly. |
+
+The 4-field selection is grounded in a SPEC §8 read:
+- **References** — used by M11 dashboard cross-linking + AI fix-generation prompt context + future cross-tool dedup signal.
+- **Tags** — used by M11 fast-filtering + future M9 AI categorization input.
+- **CVSSVector** — reserved for §8.3 `exploitability_multiplier` derivation (currently uses derived `base_cvss` numeric + separate publicly-accessible detection logic).
+- **AdditionalCWEs** — **load-bearing for §8.2 correlation algorithm** extension to handle multi-CWE findings (especially Dep-Check, which routinely emits 2–4 CWEs per CVE).
+
+**Cross-reference: asymmetric-cost meta-principle (3rd ADR invocation).** ADR-022 (recon-as-pre-scan-helpers) and ADR-023 (NativeRunner OutputFile mode) both invoked the asymmetric-cost meta-principle to justify architectural commitments. ADR-024 applies the same principle: extension cost (~4.5–5h cross-repo work post-Path-A reduction) is asymmetrically smaller than alternative cost (38 folds compounding across M7+ tools, schema-extension trigger remaining fired without incremental progress, M9 missing the multi-CWE correlation upgrade entirely). The shared meta-principle, now invoked across three consecutive M6 ADRs, is project corpus norm: **architectural commitments are made when the alternative is operationally worse, not when a generic threshold is met.**
+
+**M9 forward-pin (load-bearing).**
+
+SPEC §8.2 currently uses `cwe_id` singular for cross-layer correlation:
+
+```python
+if dast.cwe_id == sast.cwe_id:
+    score += WEIGHTS["cwe_exact"]
+elif is_cwe_parent_child(dast.cwe_id, sast.cwe_id):
+    score += WEIGHTS["cwe_parent"]
+```
+
+**M9 implementation MUST extend these checks to consider intersection with `additional_cwes`:**
+
+```python
+# Extended logic (M9 implementation):
+all_dast_cwes = {dast.cwe_id} | set(dast.additional_cwes or [])
+all_sast_cwes = {sast.cwe_id} | set(sast.additional_cwes or [])
+
+if all_dast_cwes & all_sast_cwes:
+    score += WEIGHTS["cwe_exact"]
+elif any_parent_child(all_dast_cwes, all_sast_cwes):
+    score += WEIGHTS["cwe_parent"]
+```
+
+Without this extension, M9 correlation misses multi-CWE matches (especially Dep-Check). This is the load-bearing M9 forward-pin of the entire SPEC §7.3 extension — the reason the ADR exists at this scope rather than the conservative 2-field scope.
+
+**M9 forward-pins (non-load-bearing).**
+
+- **References** — SPEC §8 algorithms do not currently use this field; reserved for UI cross-linking (M11), AI fix-generation prompt grounding, and future cross-tool dedup signal (findings citing the same CVE may be dedup candidates beyond vector similarity).
+- **Tags** — SPEC §8 algorithms do not currently use this field; reserved for M11 fast-filtering and future AI categorization input. Constraint: parsers MUST NOT duplicate `engine_category` values into Tags.
+- **CVSSVector** — SPEC §8.3 currently uses `base_cvss` numeric. Reserved for future `exploitability_multiplier` derivation: the §8.3 multiplier value 1.5 ("publicly accessible + unauthenticated") could be derived from `AV:N` + `PR:N` + `UI:N` without separate detection logic. M9 implementation may evolve §8.3 to parse CVSSVector when available; current spec leaves this as a future enhancement.
+
+**Consequences.**
+
+Positive:
+- ~12 of ~38 folded fields (~32%) rescued via per-tool parser retrofits in 6 of 9 M6 tools (Nuclei, Semgrep, Gitleaks, Dep-Check, Checkov, Wapiti).
+- M9 correlation algorithm has a documented forward-pin for the multi-CWE upgrade, discoverable by an M9 implementation engineer searching for `additional_cwes`.
+- M11 dashboard and future AI features have schema slots ready (columns-ready posture).
+- Cross-repo schema-coordination workflow exercised (synchronized Engine + Python + Docs ordering); future schema extensions inherit this commit shape.
+
+Negative:
+- **Reductions counter does NOT clear post-§7.3.** 8/9 tools still have reductions (count per tool reduced but not eliminated). The trigger remains fired; future incremental schema extensions may address tool-specific metadata. ADR-024 is one incremental step, not a complete resolution.
+- **3 tools (SSLyze, Nikto, CORStest) get zero retrofit at this scope** — their reductions stay folded. SSLyze's plugin-rules pattern doesn't carry References/Tags/CVSSVector/multi-CWE per-finding; Nikto XML emits description-only; CORStest text-with-ANSI parser extracts URL/origin/header values only.
+- **Python ingest deferred** (Path A; see subsection above). The schema columns land in a columns-ready posture; `CompletionsConsumer` does not yet insert `findings[]` rows. Until the findings-ingest task lands, the new columns will sit empty in PostgreSQL — visible in the schema, not yet populated. This is a known intermediate state, documented in the SPEC §7.3 implementation-status callout.
+- Cross-repo schema-coordination cost (~4.5–5h cross-repo) is real; future schema extensions will incur similar costs unless batched with M7+ tool data.
+- Two new tracked patterns at 1st instance (track-only, not promoted at this scope):
+  - Multi-repo schema-coordination commits (Engine + Python + Docs, strict ordering).
+  - Optional-field additive migrations (Alembic upgrade with backward-compat).
+
+**Alternatives considered (and rejected).** See Rationale table above + the Python ingest scope subsection (Path B + Path C rejection).
+
+**Anti-patterns this prevents.**
+- Evidence map accumulating inconsistent per-tool usage.
+- Schema extension via per-tool subfields (NucleiTemplateID, GitleaksRule, etc.) proliferating the schema.
+- Premature DB indexes on fields that §8 algorithms don't query.
+- Premature parsing of CVSSVector into 8-dimension subfields when §8 doesn't need them yet.
+
+**Triggers to revisit.**
+
+1. **Findings-ingest task lands.** When the Pydantic schema + `CompletionsConsumer.handle_findings()` insert path is implemented, retrofit ingest tests for the four ADR-024 fields and remove the SPEC §7.3 implementation-status callout.
+2. **M9 §8.2 implementation.** When M9 lands the cross-layer correlation algorithm, verify the multi-CWE intersection extension is implemented per the load-bearing forward-pin above.
+3. **M9 §8.3 implementation.** Decide whether to derive `exploitability_multiplier` from CVSSVector AV/PR/UI fields (replacing separate detection logic) or maintain separate logic. Either is acceptable; the CVSSVector schema is forward-compat.
+4. **Trigger remains fired (8/9 tools post-§7.3).** Future incremental schema extensions may address remaining tool-specific metadata. Likely candidates: NucleiTemplateID + GitleaksRuleID (per-tool identifiers); the Evidence map IF a 3rd+ instance of "tool-specific binary artifact storage" emerges across M7 tools and the anti-pattern risk is empirically bounded.
+5. **M7 tool reductions accumulate.** If M7 surfaces new categorical patterns (e.g., Trivy SBOM data, Nmap port-scan structure), a second SPEC §7.3 extension task may be warranted.
+6. **DB query patterns surface.** If M11 dashboard or M9 pipeline shows query patterns that benefit from indexes on Tags/References/etc., add indexes via an additive migration. Premature at this scope.
+
+**Forcing functions.**
+- Per-tool retrofit checklist documented in the design doc; each retrofit has explicit field-mapping assertion in code review.
+- Engine `events.RawFinding` JSON encoding uses `DisallowUnknownFields`; new fields landing on the Engine side without the Python schema mirror would (eventually, when ingest exists) trip strict-validation.
+- ADR-024 forward-pin text references SPEC §8.2 explicitly; an M9 implementation engineer searching for `additional_cwes` finds the algorithm-extension requirement adjacent to the schema rationale.
+- Reductions counter post-§7.3 status documented in shieldscan-engine `DRIFT-LOG.md`; future engineers see ongoing trigger status.
+
+**Open follow-ups.**
+- Findings-ingest task (Pydantic schema + `CompletionsConsumer.handle_findings()` + ingest tests + fixtures). Per Path A, scoped separately.
+- M9 §8.2 algorithm extension per the load-bearing forward-pin.
+- Reductions-counter tracking continues; future SPEC §7.3 extensions may land at M7 close or later if M7 tools add categorical patterns warranting additional first-class fields.
+- Multi-repo commit-ordering pattern documentation if a 3rd+ instance emerges (currently 1st instance at SPEC §7.3; M6.3 was a precedent but lighter-weight, no DB migration involved).
+
+**Cross-references.**
+- ADR-013 — Python sole writer constraint (load-bearing for cross-repo coordination).
+- ADR-017 — Findings inline in `job_completed` events; identifies SPEC §7.3 as canonical RawFinding schema doc; "Schema versioning of `RawFinding`" follow-up resolved by ADR-024.
+- ADR-022 — Recon-as-pre-scan-helpers (asymmetric-cost meta-principle, 1st invocation).
+- ADR-023 — NativeRunner OutputFile mode (asymmetric-cost meta-principle, 2nd invocation).
+- SPEC §7.3 — Canonical schema doc (updated in this commit with explicit per-field listing + the four ADR-024 categorical fields + Python-ingest implementation-status callout).
+- SPEC §8.2 — Cross-layer correlation algorithm (load-bearing forward-pin).
+- SPEC §8.3 — Severity scoring formula (CVSSVector forward-pin, non-load-bearing).
+- Design doc — `plans/2026-05-03-spec73-schema-extension-design.md` (brainstorming output + per-tool retrofit checklist + scope rationale; Path A deviation documented in the M6-close-followup engine DRIFT-LOG entry).
 
 ---
 

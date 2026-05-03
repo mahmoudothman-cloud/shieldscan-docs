@@ -210,6 +210,61 @@ API Keys (3), Mobile Scanning (1), Reports (5), Compliance (3), Billing (6), Too
 
 **Historical entries unchanged.** DRIFT-LOG entries that quote the old subsection counts (lines 175, 267, 494–496, 636) are historical records and remain as written; they document state-at-time, not current state.
 
+### 2026-05-03 — M6-close-followup Phase 1: ADR-024 lands (M6's 3rd ADR; canonical schema-extension artifact)
+
+**ADR-024 (RawFinding schema extension — References, Tags, CVSSVector, AdditionalCWEs) accepted at M6-close-followup.** This is the third ADR in the M6 corpus (after ADR-022 recon-as-pre-scan-helpers and ADR-023 NativeRunner OutputFile mode) and the third consecutive invocation of the asymmetric-cost meta-principle. The principle is now project corpus norm: **architectural commitments are made when the alternative is operationally worse, not when a generic threshold is met.**
+
+**Brainstorming preceded the ADR.** A structured brainstorming session locked six decisions including the moderate scope (4 fields over conservative 2 / comprehensive 6) and the load-bearing M9 §8.2 multi-CWE forward-pin. Design doc archived at `plans/2026-05-03-spec73-schema-extension-design.md` for the per-tool retrofit checklist and scope-rationale audit trail. ADR-024 is the load-bearing architectural artifact; the design doc is the supporting brainstorming output.
+
+**Three subsection adjustments to the design-doc-draft ADR text** were folded into the final ADR-024 in this commit per the user's locked Path A direction:
+
+1. **Python ingest scope subsection** documents the Phase 0 verification deviation: the Python ingest path (Pydantic schema + `CompletionsConsumer.handle_findings()` insert path) the design doc assumed does NOT exist; ADR-024 adopts Path A (extend SQLAlchemy model + Alembic migration in Phase 2; defer Pydantic + ingest to a separate findings-ingest task).
+2. **Consequences/Negative** lists "Python ingest deferred" as a known intermediate state with a SPEC §7.3 implementation-status callout pointing future readers to the rationale.
+3. **Triggers to revisit** adds "Findings-ingest task lands" as the explicit trigger to retrofit ingest tests for the four ADR-024 fields and remove the implementation-status callout.
+
+The Path A reasoning is preserved in ADR-024 itself (Path B and Path C explicitly rejected with rationale) so future engineers reading the corpus a year+ later understand both the chosen path and the rejected alternatives.
+
+### 2026-05-03 — M6-close-followup Phase 1: SPEC §7.3 explicit per-field listing + Go-struct cross-reference
+
+**SPEC §7.3 updated** with an explicit per-field listing for the `findings[]` array entries (RawFinding wire shape). Replaces the prior literal placeholder (`"...": "..."`) with a 30-row table covering identity / classification / 4 evidence groups (web/source/mobile/SSL) / categorical (ADR-024) / metadata.
+
+**Canonical source of truth pinned.** SPEC §7.3 explicitly identifies the Go struct `events.RawFinding` (in `shieldscan-engine/internal/events/events.go`) and its Python mirror `app.models.raw_findings.RawFinding` (in `shieldscan-api`) as the canonical sources; SPEC §7.3 is the cross-repo agreement doc per ADR-017's "Schema versioning of `RawFinding`" follow-up. ADR-024 establishes the workflow for synchronized cross-repo extensions.
+
+**Strict-schema discipline cross-referenced.** SPEC §7.3 update notes that both sides enforce strict-schema validation (Go: `DisallowUnknownFields`; Python: `extra="forbid"` per ADR-017's M4 Pydantic discipline transfer). Adding a new field requires synchronized extension on both sides per ADR-024's coordination workflow — discoverable at the SPEC §7.3 reading point, not buried in an ADR.
+
+**Implementation-status callout** below the per-field table acknowledges the Python ingest deferral honestly: as of M6-close-followup the SQLAlchemy model has all columns required to persist the wire shape (post-Phase 2), but `CompletionsConsumer` does not yet insert `findings[]` rows. Pointing readers to ADR-024's "Triggers to revisit" closes the loop.
+
+### 2026-05-03 — M6-close-followup Phase 0: Path A adoption (Python ingest deferred; columns-ready posture)
+
+**Phase 0 verification surfaced a load-bearing deviation from the design doc.** The design doc assumed the Python ingest path (Pydantic schema + `CompletionsConsumer.handle_findings()` insert path) existed; verification confirmed it does NOT:
+
+- ✅ `app.models.raw_findings.RawFinding` SQLAlchemy model exists (141 lines).
+- ❌ `app.schemas.raw_findings` Pydantic schema does NOT exist (the `app/schemas/` directory has 8 files: api_keys, auth, credentials, errors, mobile, projects, scan_compare, scans — no raw_findings).
+- ❌ `CompletionsConsumer.handle_event` does NOT insert RawFinding rows (the 287-line consumer handles `ScanJob.status` + `ScanJob.finding_count` updates only; never references `RawFinding` or the `findings` array).
+
+**Path A adopted (over Path B fold-ingest-in and Path C defer-entire-task).** The user's locked decision: extend the SQLAlchemy model + Alembic migration in Phase 2 (this commit's sibling); defer the Pydantic schema + ingest path to a separate findings-ingest task (likely M4-completion or pulled forward from M9). The columns-ready posture is honest about state — the Engine ships emissions for consumers that don't yet exist (the same architectural pattern as M5/M6 wire-format work that preceded ADR-024).
+
+**Why Path A wins (recorded for future readers):**
+1. Honest about state; columns-ready posture is architecturally sound (Engine ships things consumers don't yet exist for — same pattern as M5/M6 wire-format work).
+2. Path B (fold ingest into this task) conflates SPEC §7.3 followup with a findings-ingest M4-completion deliverable; scope discipline matters, and the M4-completion work is cross-cutting (RLS via `app.current_org_id` + transaction discipline + bulk insert + idempotency).
+3. Path C (defer entire task until ingest exists) wastes real value: the Engine retrofit + Docs commit deliver immediate value even without an ingest path (32% of M6 folds rescued, M9 §8.2 forward-pin documented earlier in the corpus).
+
+**Task shape post-Path-A:** ~4.5–5h (down from ~6.5–7h). Phase 2 reduced from ~2.5h to ~30–45 min (SQLAlchemy + Alembic + extending existing `tests/models/test_findings.py`; no Pydantic, no consumer changes, no ingest fixtures). Phase 3 unchanged (~3h Engine work).
+
+### 2026-05-03 — M6-close-followup Phase 0: design-doc inaccuracy honestly acknowledged
+
+**The original design doc was wrong about Python ingest state.** The doc was authored before the Phase 0 verification pass and assumed (a) a Pydantic schema exists at `app.schemas.raw_findings`, and (b) `CompletionsConsumer` ingests `findings[]` rows. Neither assumption holds in the current `shieldscan-api` codebase.
+
+This entry exists to make the inaccuracy discoverable in the project corpus rather than silently corrected. The same forcing-function discipline that catches code drift catches design-doc drift: surfacing the deviation BEFORE Phase 1 implementation prevents the deviation from compounding into Phase 2 / Phase 3 implementation churn.
+
+**Pattern reinforced (3rd self-catch instance in M6):**
+- M6.3 — empirical re-eval reversed inline-tempfile lean (httpx stdin pipe is correct shape).
+- M6.6 — empirical re-eval surfaced Nikto XML support (sidestepped fragile text parser).
+- M6.7 — Wapiti `-o /dev/stdout` corruption empirically verified, motivated ADR-023.
+- **M6-close-followup Phase 0 — design-doc Python-ingest assumption empirically refuted before Phase 1.**
+
+The pre-prep / Phase 0 verification habit is now load-bearing project corpus discipline. Future task scope proposals should explicitly include verification items for any cross-repo concern that the proposal's lean depends on.
+
 ### 2026-05-01 — Task 5.1 Commit 2: engine repo bootstrapped, all forcing functions wired
 
 **Engine bootstrap shipped under TDD discipline.** Following Commit 1 (docs sweep, `95d04fe`), the user installed Go 1.26.2 + golangci-lint v2.11.4 between sessions; this commit bootstraps `shieldscan-engine/` with all forcing-function infrastructure for ADR-013/016/017/018/021.
