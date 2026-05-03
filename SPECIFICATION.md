@@ -1822,7 +1822,8 @@ A structured brainstorming session preceded this ADR (design doc archived at `pl
 A Phase 0 verification pass before implementation surfaced one load-bearing deviation from the design doc — see "Python ingest scope" subsection below.
 
 **Decision.**
-Extend `events.RawFinding` (Go canonical) and the `app.models.raw_findings.RawFinding` SQLAlchemy mirror with **four new optional fields**:
+
+Extend `events.RawFinding` (Engine Go struct) and the SQLAlchemy model `app.models.raw_findings.RawFinding` (Python persistence mirror) with 4 new optional fields. Pydantic ingest schema is out of scope at this task; see "Python ingest scope" subsection below.
 
 ```go
 // internal/events/events.go
@@ -1844,19 +1845,37 @@ Field semantics:
 
 All four fields are `omitempty` on the Go side and Optional on the Python side; backward-compatible with existing engine emissions.
 
-**Python ingest scope (Phase 0 deviation, load-bearing acknowledgment).**
+**Python ingest scope.**
 
-Phase 0 verification surfaced that the Python ingest path the original design doc assumed does not exist:
+This ADR adds the 4 fields to the canonical schema (SPEC §7.3) and
+the Engine emission path. Python-side ingest (CompletionsConsumer
+extension to insert RawFinding rows from event["findings"]) is
+**deferred** to a future findings-ingest task.
 
-- The SQLAlchemy `RawFinding` model exists at `app.models.raw_findings.RawFinding`.
-- **No Pydantic schema for RawFinding ingest exists** at `app.schemas.raw_findings`.
-- **`CompletionsConsumer` does not insert `findings[]` rows.** At M4 it was scoped to `ScanJob.status` + `ScanJob.finding_count` counter updates only; the 287-line consumer never references `RawFinding` or the `findings` array.
+Phase 0 verification (M6-close-followup, 2026-05-03) discovered
+that CompletionsConsumer currently only updates ScanJob.status +
+finding_count counter; it does NOT insert RawFinding rows from
+event["findings"]. This is an unfinished M4 deliverable per
+ADR-013 (Python sole writer) + ADR-017 (findings inline in
+job_completed events).
 
-This ADR adopts **Path A**: extend the SQLAlchemy model + add the Alembic migration in this commit, and defer Pydantic schema + ingest-path implementation to a separate findings-ingest task (likely at M4-completion or pulled forward from M9). The columns-ready posture is honest about state — the Engine ships emissions for consumers that don't yet exist (the same architectural pattern as M5/M6 wire-format work that preceded this ADR).
+The schema-extension work proceeds in **columns-ready posture**:
+- Engine emits findings with new fields populated
+- SQLAlchemy model + Alembic migration land columns
+- When findings-ingest task lands, Python side reads existing
+  columns; no schema change required at ingest time
 
-Two paths were considered and rejected:
-- **Path B (fold ingest into this task):** Conflates SPEC §7.3 followup with a findings-ingest M4-completion deliverable; the latter is cross-cutting (RLS via `app.current_org_id` + transaction discipline + bulk insert + idempotency) and roughly doubles task size.
-- **Path C (defer entire task until ingest exists):** Wastes immediate value: the Engine retrofit + Docs commit ship a better wire format right now (32% of M6 folds rescued), and the load-bearing M9 §8.2 forward-pin (below) lands earlier rather than later in the project corpus.
+This deferral is documented explicitly so future engineers don't
+mistake "schema columns exist" for "ingest path operational."
+The Engine commit + Docs commit deliver immediate value (richer
+wire format; M9 §8.2 forward-pin); ingest landing is a separate
+milestone task.
+
+Trigger to revisit: findings-ingest task lands (likely M4-completion
+or dedicated M-followup before M9). At that point, add Pydantic
+schema mirroring SQLAlchemy model + extend CompletionsConsumer
++ add ingest tests + fixtures. The schema columns are already in
+place from this ADR.
 
 **Rationale.**
 
@@ -1919,13 +1938,17 @@ Positive:
 Negative:
 - **Reductions counter does NOT clear post-§7.3.** 8/9 tools still have reductions (count per tool reduced but not eliminated). The trigger remains fired; future incremental schema extensions may address tool-specific metadata. ADR-024 is one incremental step, not a complete resolution.
 - **3 tools (SSLyze, Nikto, CORStest) get zero retrofit at this scope** — their reductions stay folded. SSLyze's plugin-rules pattern doesn't carry References/Tags/CVSSVector/multi-CWE per-finding; Nikto XML emits description-only; CORStest text-with-ANSI parser extracts URL/origin/header values only.
-- **Python ingest deferred** (Path A; see subsection above). The schema columns land in a columns-ready posture; `CompletionsConsumer` does not yet insert `findings[]` rows. Until the findings-ingest task lands, the new columns will sit empty in PostgreSQL — visible in the schema, not yet populated. This is a known intermediate state, documented in the SPEC §7.3 implementation-status callout.
+- **Python ingest deferred to future task.** Schema columns exist
+  + ready for ingest, but actual ingest path (CompletionsConsumer
+  extension + Pydantic schema) requires a separate findings-ingest
+  task. Scope discipline matters: SPEC §7.3 extension is canonical
+  schema work, not ingest implementation.
 - Cross-repo schema-coordination cost (~4.5–5h cross-repo) is real; future schema extensions will incur similar costs unless batched with M7+ tool data.
 - Two new tracked patterns at 1st instance (track-only, not promoted at this scope):
   - Multi-repo schema-coordination commits (Engine + Python + Docs, strict ordering).
   - Optional-field additive migrations (Alembic upgrade with backward-compat).
 
-**Alternatives considered (and rejected).** See Rationale table above + the Python ingest scope subsection (Path B + Path C rejection).
+**Alternatives considered (and rejected).** See Rationale table above. The "Python ingest scope" subsection above documents the deferral of ingest-path implementation to a separate findings-ingest task; ADR-024 itself is scoped to canonical schema work + Engine emission, not ingest implementation.
 
 **Anti-patterns this prevents.**
 - Evidence map accumulating inconsistent per-tool usage.
@@ -1935,12 +1958,15 @@ Negative:
 
 **Triggers to revisit.**
 
-1. **Findings-ingest task lands.** When the Pydantic schema + `CompletionsConsumer.handle_findings()` insert path is implemented, retrofit ingest tests for the four ADR-024 fields and remove the SPEC §7.3 implementation-status callout.
-2. **M9 §8.2 implementation.** When M9 lands the cross-layer correlation algorithm, verify the multi-CWE intersection extension is implemented per the load-bearing forward-pin above.
-3. **M9 §8.3 implementation.** Decide whether to derive `exploitability_multiplier` from CVSSVector AV/PR/UI fields (replacing separate detection logic) or maintain separate logic. Either is acceptable; the CVSSVector schema is forward-compat.
-4. **Trigger remains fired (8/9 tools post-§7.3).** Future incremental schema extensions may address remaining tool-specific metadata. Likely candidates: NucleiTemplateID + GitleaksRuleID (per-tool identifiers); the Evidence map IF a 3rd+ instance of "tool-specific binary artifact storage" emerges across M7 tools and the anti-pattern risk is empirically bounded.
-5. **M7 tool reductions accumulate.** If M7 surfaces new categorical patterns (e.g., Trivy SBOM data, Nmap port-scan structure), a second SPEC §7.3 extension task may be warranted.
-6. **DB query patterns surface.** If M11 dashboard or M9 pipeline shows query patterns that benefit from indexes on Tags/References/etc., add indexes via an additive migration. Premature at this scope.
+1. **M9 §8.2 implementation.** When M9 lands the cross-layer correlation algorithm, verify the multi-CWE intersection extension is implemented per the load-bearing forward-pin above.
+2. **M9 §8.3 implementation.** Decide whether to derive `exploitability_multiplier` from CVSSVector AV/PR/UI fields (replacing separate detection logic) or maintain separate logic. Either is acceptable; the CVSSVector schema is forward-compat.
+3. **Trigger remains fired (8/9 tools post-§7.3).** Future incremental schema extensions may address remaining tool-specific metadata. Likely candidates: NucleiTemplateID + GitleaksRuleID (per-tool identifiers); the Evidence map IF a 3rd+ instance of "tool-specific binary artifact storage" emerges across M7 tools and the anti-pattern risk is empirically bounded.
+4. **M7 tool reductions accumulate.** If M7 surfaces new categorical patterns (e.g., Trivy SBOM data, Nmap port-scan structure), a second SPEC §7.3 extension task may be warranted.
+5. **DB query patterns surface.** If M11 dashboard or M9 pipeline shows query patterns that benefit from indexes on Tags/References/etc., add indexes via an additive migration. Premature at this scope.
+6. **Findings-ingest task lands.** Pydantic schema mirroring
+   SQLAlchemy model + CompletionsConsumer ingest extension +
+   ingest tests + fixtures land at that point. Schema columns
+   from this ADR are already in place; no schema change needed.
 
 **Forcing functions.**
 - Per-tool retrofit checklist documented in the design doc; each retrofit has explicit field-mapping assertion in code review.
