@@ -1640,7 +1640,79 @@ Applied to M5 task surfaces:
 
 > **ADR numbering note.** §13 jumps from ADR-018 to ADR-021. ADR-019 (cancel Pub/Sub confirmation) and ADR-020 (worker concurrency model) numbers are reserved — not missing. Both decisions are currently captured as DRIFT-LOG entries; promote to full ADR with the reserved number when the underlying decision becomes load-bearing across multiple tasks.
 >
-> ADR-022 (recon-as-pre-scan-helpers) is reserved pending Task 6.3 implementation; tracked in `shieldscan-engine/DRIFT-LOG.md` as a candidate per the M6 landscape pass (Finding 2).
+> ADR-022 (recon-as-pre-scan-helpers) lands at M6.3 — see below.
+
+### ADR-022: Recon tools as pre-scan helpers, not ToolRunner-registered
+
+**Status:** Accepted at M6.3 (2026-05-03).
+
+**Context.** Subfinder and httpx are pre-scan discovery tools, not finding-producers. Subfinder emits subdomain strings; httpx emits LiveHost metadata (URL, status, tech stack, etc.). Neither produces `events.RawFinding` — the canonical output of `tools.ToolRunner.Run`.
+
+**Decision.** Ship recon as helper functions in `internal/tools/recon/`, NOT as ToolRunners registered with `worker.Registry`:
+
+```go
+// internal/tools/recon/recon.go
+type ReconResult struct {
+    Subdomains []string
+    LiveHosts  []LiveHost
+}
+type LiveHost struct {
+    URL string; StatusCode int; Title string; Tech []string;
+    Webserver string; ContentType string
+}
+func RunRecon(ctx context.Context, domain string, limit int,
+    publisher *redis.ProgressPublisher, log zerolog.Logger) (*ReconResult, error)
+```
+
+M8 (Recon-First Pipeline) imports `internal/tools/recon` and invokes `RunRecon` as a pre-scan phase before dispatching per-target scan jobs to the standard processor.
+
+`cmd/worker/run.go` (M6.8 wiring) explicitly does NOT register Subfinder or httpx with `worker.Registry`; an explicit code comment references this ADR.
+
+**Rationale.**
+
+Three alternatives evaluated and rejected:
+
+| Alternative | Why rejected |
+|---|---|
+| Synthetic `subdomain_discovered` findings via ToolRunner | Semantically wrong — subdomain discovery is not a vulnerability; would pollute the findings stream + confuse the M9 AI pipeline that operates on findings |
+| Defer recon entirely to M8 (no M6 work) | Wastes M6 capacity; recon parsers + helpers are valuable + testable in isolation |
+| Per-task hack at M8 | M8 invocation needs a canonical, testable shape; per-task hacks fragment |
+
+The recon-as-helpers shape is documented in TOOL-ARCH §8 (Recon-First Pipeline) and plan §6.3's literal. ADR-022 codifies the architectural commitment.
+
+**Cross-reference: ADR-023 asymmetric-cost meta-principle.** ADR-023 (NativeRunner OutputFile mode at M6.7) overrode the three-instance promotion threshold because the cost of NOT abstracting (race conditions, debugging burden) exceeded the cost of premature abstraction. ADR-022 is a different shape of architectural commitment — not threshold-override but type-system carve-out. The shared meta-principle: **architectural commitments are made when the alternative is operationally worse, not when a generic threshold is met.** Future ADRs in the M6/M7 corpus may invoke similar asymmetric-cost reasoning.
+
+**Consequences.**
+
+Positive:
+- `internal/tools/recon` is testable in isolation (parsers + RunRecon orchestration).
+- M8 inherits a canonical signature; integration is import + invoke.
+- The findings stream stays semantically clean (only vulnerabilities flow to M9 AI pipeline).
+
+Negative:
+- The "tool" abstraction is bimodal: most are ToolRunners; recon are helpers. New readers may expect uniformity.
+- 6.8 wiring needs an explicit code comment explaining why recon is absent from the Registry.
+
+**Alternatives considered (and rejected).** See Rationale table above.
+
+**⚠️ SPECULATIVE M8 invocation pattern.** The example below is a **best-effort prediction**, NOT a binding contract. M8 implementation may refine the invocation API based on requirements that emerge during M8 design. The recon-as-helpers principle holds regardless of how the call site evolves.
+
+```go
+// M8 ScanExecutor (SPECULATIVE — subject to M8 implementation refinement)
+result, _ := recon.RunRecon(ctx, scanReq.Domain, scanReq.SubdomainLimit, publisher, log)
+targets := buildTargetList(scanReq.RootURL, result.LiveHosts)
+for _, target := range targets {
+    dispatcher.Enqueue(targetJob(scanReq, target))
+}
+```
+
+M8 may instead introduce a `ReconCoordinator` type, batch multiple recon invocations across scan-job batches, or apply additional filtering layers before target dispatch. The above is illustrative.
+
+**Triggers to revisit.**
+
+- **A new "tool" emits non-finding output** (e.g., a fuzzer producing wordlists). At that point, the recon-helpers shape may generalize to "pre-scan-utilities" and warrant a DEVELOPMENT-PATTERNS entry.
+- **M8 implementation surfaces a need for ToolRunner-shaped recon access** (unlikely; speculative). Revisit if integration tension emerges.
+- **Customer demand for treating subdomain discoveries as findings** (e.g., compliance reporting). At that point, add a synthetic-finding emitter alongside `RunRecon`; don't replace the helper.
 
 ### ADR-023: Extend NativeRunner with file-output mode for tools that don't write findings to stdout
 

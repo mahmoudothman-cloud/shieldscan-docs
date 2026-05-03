@@ -542,7 +542,7 @@ semgrep scan --config=p/default \
 **Category:** Recon
 **Invocation:**
 ```bash
-subfinder -d example.com -silent -o - -max-time 60
+subfinder -d example.com -oJ -silent -max-time 60
 ```
 
 **Output format:** Newline-separated subdomain list.
@@ -571,7 +571,7 @@ func parseSubfinderOutput(out []byte) []string {
 ```bash
 echo "api.example.com
 admin.example.com
-staging.example.com" | httpx -silent -json -status-code -tech-detect
+staging.example.com" | httpx -silent -json -status-code -title -tech-detect -web-server
 ```
 
 **Output format:** JSON lines (one per probed host).
