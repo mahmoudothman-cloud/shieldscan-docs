@@ -227,6 +227,11 @@ shieldscan-engine/
 │   │   ├── runner.go              # ToolRunner interface
 │   │   ├── native.go              # NativeRunner (subprocess)
 │   │   ├── docker_service.go      # DockerServiceRunner (HTTP)
+│   │   ├── docker/                # M7.5a + ADR-026
+│   │   │   ├── container.go       # Docker SDK Container abstraction
+│   │   │   ├── client_adapter.go  # productionClient adapter
+│   │   │   ├── warmpool.go        # WarmPool primitive (lazy spin-up)
+│   │   │   └── dockerrunner.go    # DockerRunner framework type
 │   │   ├── nuclei.go
 │   │   ├── zap.go
 │   │   ├── semgrep.go
@@ -244,16 +249,13 @@ shieldscan-engine/
 │   │   └── checkov.go             # ← IaC
 │   ├── orchestrator/
 │   │   ├── scan_executor.go
-│   │   ├── tool_router.go         # Scan type → tools mapping
-│   │   └── warm_pool.go           # Docker warm pool
+│   │   └── tool_router.go         # Scan type → tools mapping
 │   ├── worker/
 │   │   ├── startup.go             # Tool health checks on boot
 │   │   └── processor.go           # Job processing loop
-│   ├── redis/
-│   │   ├── queue.go
-│   │   └── pubsub.go
-│   └── docker/
-│       └── runner.go              # Docker SDK wrapper
+│   └── redis/
+│       ├── queue.go
+│       └── pubsub.go
 ├── deploy/
 │   ├── docker-compose.services.yml
 │   ├── provision-worker.sh
@@ -1184,6 +1186,8 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 **Updated decision:** Lightweight native binaries + persistent Docker services for heavy tools (ZAP, MobSF, Trivy, SQLMap).
 **Rationale:** Eliminates 2–3s per-scan container startup for heavy tools. MobSF is designed as a persistent service. Native binaries fastest for CLI tools.
 
+**Addendum (2026-05-04, per ADR-026):** Tool classification refined. Trivy and SQLMap are CLI-shaped tools (single execution; output to stdout/file) and use the warm pool framework (DockerRunner) rather than persistent service framework (DockerServiceRunner). Persistent Docker services per this ADR are now scoped to ZAP and MobSF only. See ADR-026 for the full warm-pool primitive + DockerRunner framework architecture.
+
 ### ADR-007: Recon-First Pipeline
 **Status:** Accepted (2026-04-18)
 **Decision:** Every web scan starts with Subfinder + httpx. Discovered live subdomains automatically added to scan target list (up to subdomain_limit).
@@ -1989,6 +1993,123 @@ Negative:
 - SPEC §8.2 — Cross-layer correlation algorithm (load-bearing forward-pin).
 - SPEC §8.3 — Severity scoring formula (CVSSVector forward-pin, non-load-bearing).
 - Design doc — `plans/2026-05-03-spec73-schema-extension-design.md` (brainstorming output + per-tool retrofit checklist + scope rationale; Path A deviation documented in the M6-close-followup engine DRIFT-LOG entry).
+
+### ADR-026: DockerRunner framework + lazy warm pool — M7 container lifecycle architecture
+**Status:** Accepted (2026-05-04, Task 7.5a)
+
+**Context.**
+M7 introduces 5 Docker-based scanning tools (Trivy, Nmap, MobSF, ZAP, SQLMap) extending the M6-shipped 9 native CLI tools. ADR-006 (Hybrid Native + Persistent Docker, refined 2026-04-18) established the broad architectural decision to use persistent Docker services for heavy tools, eliminating 2-3s per-scan container startup. ADR-008 (MobSF for Mobile Security) refined this for MobSF specifically as a persistent HTTP-API service.
+
+The M7.5 brainstorming surfaced that ADR-006's "persistent Docker services" framing implicitly conflated two distinct architectural shapes:
+- **HTTP-API persistent services:** ZAP and MobSF run as long-lived servers; runner makes HTTP requests; container lifecycle decoupled from individual scans.
+- **CLI-shaped warm-pool tools:** Trivy, Nmap, SQLMap exit after each scan; per-scan container startup is the cost driver; reuse via warm pool eliminates the 2-3s startup without persistent service complexity.
+
+These are different concurrency and lifecycle contracts. HTTP services need session/state management, version drift mitigation per scan-run, and HTTP-specific health checks. CLI tools need cleanup-between-checkouts for tenant isolation, lazy spin-up to keep resource floor at zero, and exit-code-aware execution.
+
+The original ADR-006 text grouped Trivy and SQLMap with ZAP and MobSF as "persistent Docker services," which is architecturally correct in cost-driver terms (avoiding cold start) but operationally wrong (CLI tools don't run as services). Option β was locked in brainstorming: two distinct framework types, one per shape.
+
+**Decision.**
+Establish two M7 framework types in shieldscan-engine:
+
+1. **DockerRunner** (`internal/tools/docker/dockerrunner.go`, this ADR): warm-pool wrapper for short-lived CLI-shaped Docker tools. Wraps WarmPool primitive (`internal/tools/docker/warmpool.go`) which provides lazy spin-up + max-bound + cleanup-between-checkouts + optional health check. Symmetric with NativeRunner (per ADR-023 OutputFile mode framework precedent).
+   - Consumers: Trivy (M7.1), Nmap (M7.2), SQLMap (M7.6).
+
+2. **DockerServiceRunner** (`internal/tools/docker_service.go`, M5.3 + ADR-006 + ADR-008; framework expansion via Task 7.5b future): HTTP-API wrapper for persistent Docker services. Long-lived service containers; runner makes HTTP requests; image pinning per ADR-006 risk #14.
+   - Consumers: ZAP (M7.3), MobSF (M7.4).
+
+ADR-006's "persistent Docker services" classification is refined: the term applies to ZAP and MobSF only post-ADR-026; Trivy and SQLMap reclassify to DockerRunner warm pool.
+
+**Lazy warm pool semantics.**
+WarmPool starts empty. First Checkout triggers spin-up of a single container; subsequent Checkouts reuse warmed containers if available, otherwise spin up to max-bound. Resource floor is zero for unused tools (customers running only SAST scans pay zero cost for Trivy/Nmap/SQLMap pools). Cleanup hook runs between Checkouts to ensure tenant isolation (no state leak between scans of different tenants/targets). Stateless tools use the exported NoCleanup helper explicitly — statelessness is architecturally visible.
+
+**Concurrency contract.**
+WarmPool is safe for concurrent use across goroutines. Internal mechanism: channel-based available pool with sync.Mutex for size accounting; separate done channel for shutdown signal (channel-close-as-signal anti-pattern explicitly avoided to prevent send-to-closed-channel races). Health-check replacement is size-neutral on success (stop -1 + spinUp +1 = 0); size decrement only on spinUp failure. Blocked Checkouts observe both ctx.Done() and the shutdown signal to prevent silent nil-Container hazards.
+
+These concurrency invariants are pinned by:
+- `TestWarmPool_Concurrent_NoRaceCondition` — race-detector pin (10 goroutines × 50 cycles)
+- `TestWarmPool_Shutdown_UnblocksWaitingCheckout` — done-channel signal pin
+- `TestWarmPool_Return_DecrementsSizeAllowsFutureSpinUp` — size accounting pin
+
+**ToolRunner contract symmetry.**
+DockerRunner satisfies the ToolRunner interface (Run/Name/Category) symmetric with NativeRunner. Per-tool config (image, BuildArgs, ParseOutput, ExitCodeLenient, Timeout); framework handles lifecycle + observability + finding enrichment (ToolName/EngineCategory/DiscoveredAt/Fingerprint populated by runner not ParseOutput per `internal/tools/runner.go:65-69` docstring). Compile-time interface assertion (`var _ tools.ToolRunner = (*DockerRunner)(nil)`) prevents signature drift.
+
+3-tier timeout precedence symmetric with NativeRunner: `cfg.Timeout (per-scan) → runner.Timeout (per-tool default) → DefaultDockerTimeout (30 min framework floor)`.
+
+Cleanup runs via `context.WithoutCancel(parent) + 30s timeout` — detached from Run's primary context to ensure cleanup completes even when Run hits its timeout. Cleanup-uses-parent-context anti-pattern explicitly avoided (matches the M6.7 Wapiti file-output cleanup pattern at 2nd instance).
+
+**Rationale.**
+Three framework alternatives considered:
+
+| Alternative | Why rejected |
+|---|---|
+| Single DockerRunner type for all 5 M7 tools | Conflates HTTP-API session management with CLI execution; complicates per-tool configuration; cleanup contracts genuinely differ between persistent services and short-lived CLI tools. |
+| Per-tool runner type (no shared framework) | Reinvents lifecycle management per tool; loses the ToolRunner interface uniformity ADR-023 established for native tools; dramatically multiplies test surface area. |
+| Persistent containers for CLI tools (ADR-006 verbatim) | Resource floor non-zero for unused tools; no cleanup-between-checkouts contract for tenant isolation; CLI tools that exit cleanly fight against persistent-service framework. |
+
+The two-framework-types decision (Option β) provides:
+- Clear separation of concerns: HTTP session management vs CLI execution
+- Symmetric framework patterns (NativeRunner / DockerRunner / DockerServiceRunner all satisfy ToolRunner with appropriate per-tool config)
+- Cost-driver elimination via warm pool for CLI tools (matches ADR-006's original cost-driver intent)
+- Tenant isolation via cleanup-between-checkouts contract
+- Resource floor at zero for unused tools
+
+**Cross-reference:** ADR-022, ADR-023, ADR-024 invoke the asymmetric-cost meta-principle (architectural commitment cost vs alternative cost). ADR-026 is the project corpus's 5th ADR invoking this meta-principle, well past 3-instance threshold; promotion candidate to DEVELOPMENT-PATTERNS at next architectural decision-point.
+
+**Consequences.**
+
+Positive:
+- Two M7 framework types with clean separation of concerns; ADR-006's broad architecture refined with operationally accurate classification
+- Warm pool primitive enables zero-floor resource cost for unused tools; matches the ADR-006 cost-driver elimination intent without persistent-service complexity
+- Tenant isolation via cleanup-between-checkouts contract is architecturally explicit
+- Consumer tasks (M7.1 Trivy, M7.2 Nmap, M7.6 SQLMap) inherit ready-to-use DockerRunner framework
+- Test coverage 43/43 (7 Container + 19 WarmPool + 17 DockerRunner); race detector clean
+
+Negative:
+- Two framework types vs one increases the M7 framework surface area; each consumer task requires deciding which framework applies (though Option β resolution makes this assignment unambiguous per tool category)
+- DockerServiceRunner framework needs Task 7.5b expansion before ZAP + MobSF consumer tasks (M7.3, M7.4) can land
+- ADR-006 retains its broad framing but now requires reading the addendum + ADR-026 for accurate tool classification — small discoverability cost mitigated by inline addendum + cross-reference
+
+**Anti-patterns this prevents.**
+- Channel-close-as-signal pattern in concurrent code: WarmPool uses dedicated done channel for shutdown signaling; available channel never closed.
+- Decrement-without-increment size accounting: Health-check replacement is size-neutral on success.
+- Cleanup-uses-parent-context pattern: defer Pool.Return uses `context.WithoutCancel(ctx) + 30s timeout` to survive primary-context cancellation.
+- ParseOutput populating identity fields: Framework owns identity enrichment per ToolRunner docstring contract.
+- Single-type-fits-all framework: Two framework types align with two operational shapes (CLI vs HTTP-API).
+
+**Triggers to revisit.**
+1. **Task 7.5b DockerServiceRunner framework expansion.** When framework lands, verify HTTP session management + version drift mitigation + health checks satisfy ADR-006 risk #14 + ADR-008 MobSF requirements.
+2. **First DockerRunner consumer (M7.1 Trivy).** Validate the framework abstraction against real tool integration. If consumer task surfaces framework gaps (e.g., output streaming for large SBOMs, exit-code-leniency edge cases), iterate via additive framework changes.
+3. **Cleanup-uses-parent-context anti-pattern at 3rd instance.** Currently 2nd instance (M6.7 Wapiti + Phase 3 DockerRunner). 3rd instance triggers DEVELOPMENT-PATTERNS promotion.
+4. **Compile-time interface assertion at 3rd instance.** Currently 2nd instance (NativeRunner native.go:147 + DockerRunner). 3rd instance triggers promotion.
+5. **dockerClient adapter pattern at 3rd instance.** Currently 1st instance (productionClient). If reused for AWS SDK, GCP SDK, or other SDK abstractions in future tasks, track for promotion.
+
+**Forcing functions.**
+- Compile-time `var _ tools.ToolRunner = (*DockerRunner)(nil)` assertion: signature drift fails build before any test runs.
+- `TestWarmPool_Concurrent_NoRaceCondition`: 500-cycle race detector pin; CI fails if any concurrency regression introduced.
+- `TestWarmPool_Shutdown_UnblocksWaitingCheckout`: done-channel signal contract pin; future engineer reverting the done-channel pattern triggers test failure.
+- ADR-026 cross-references in shieldscan-engine `internal/tools/runner.go` docstring + commit f5d77c8 message body: future engineers searching for runner-type assignments find this ADR via either docstring read or git log search.
+
+**Open follow-ups.**
+- Task 7.5b: DockerServiceRunner framework expansion (HTTP-API persistent services).
+- Per-tool consumer tasks: M7.1 Trivy, M7.2 Nmap, M7.3 ZAP, M7.4 MobSF, M7.6 SQLMap.
+- Asymmetric-cost meta-principle DEVELOPMENT-PATTERNS promotion candidate (5th instance well past threshold).
+- Cleanup-uses-parent-context anti-pattern tracking (2nd instance; promotion at 3rd).
+- Compile-time interface assertion tracking (2nd instance; promotion at 3rd).
+
+**Cross-references.**
+- ADR-006: Hybrid Native + Persistent Docker (broad architectural framing; refined per addendum).
+- ADR-008: MobSF for Mobile Security (DockerServiceRunner consumer precedent).
+- ADR-013: Python sole writer for scan state (atomicity preserved; runners return findings to caller).
+- ADR-017: Findings inline in job_completed events (per-runner findings flow into shared pipeline).
+- ADR-021: ctx-discipline (context propagation honored throughout WarmPool + DockerRunner).
+- ADR-022: Recon-as-pre-scan-helpers (asymmetric-cost meta-principle precedent).
+- ADR-023: NativeRunner OutputFile mode (framework precedent; DockerRunner symmetric).
+- ADR-024: RawFinding schema extension (asymmetric-cost meta-principle precedent).
+- shieldscan-engine commit f5d77c8: warm pool primitive + DockerRunner framework implementation.
+- shieldscan-engine `internal/tools/runner.go`: ToolRunner contract docstring + three-runner-type architecture documentation.
+- shieldscan-docs `docs/plans/2026-05-03-warm-pool-primitive-design.md`: design doc artifact (Phase 2 corrections pending).
+- IMPLEMENTATION-PLAN Task 7.5: warm pool primitive obligation.
+- SPEC §3.2: shieldscan-engine repository structure (path drift corrected per this commit).
 
 ---
 
