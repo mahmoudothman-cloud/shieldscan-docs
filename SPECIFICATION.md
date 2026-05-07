@@ -2208,7 +2208,69 @@ Negative:
 
 ---
 
-## 14. Glossary
+## 14. Meta-Principles
+
+Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.
+
+This section documents project-corpus-wide meta-principles. Promotion to this section happens when a meta-principle has been invoked across 3+ ADRs without contradiction; the cross-instance accumulation evidences a stable reasoning frame, not just a single ADR's local logic.
+
+Future ADRs may invoke documented meta-principles by reference (e.g., "Per §14.1 asymmetric-cost meta-principle, ..."). Inverse pin: future ADRs that depart from a documented meta-principle should explicitly acknowledge the departure + reason in their text.
+
+### 14.1 Asymmetric-cost meta-principle
+
+**Promoted:** 2026-05-06 (Task 7.2 Phase 5.D; 6-instance threshold met)
+
+**Canonical phrasing.**
+
+> Architectural commitments are made when the alternative is operationally worse, not when a generic threshold is met.
+
+**Frame.** Architectural decisions sometimes face symmetric framing: "we should add this thing only if N instances accumulate." Symmetric framing is appropriate when the decision's cost (cognitive load, schema growth, framework expansion) is roughly equal to the cost of NOT making it (continued ad-hoc handling, accumulated technical debt). When the costs are asymmetric — i.e., when continued ad-hoc handling becomes operationally worse than the architectural commitment — the threshold is overrideable. The decision is made on cost-asymmetry, not on threshold-reaching.
+
+This frame is invoked when an architectural decision deserves attention before reaching a generic threshold OR when a generic threshold is reached but the decision deserves *not* being made because the alternative isn't operationally worse.
+
+**Invocation enumeration.** As of 2026-05-06, the meta-principle has been invoked in 6 ADRs across the project corpus:
+
+| # | ADR | Repo | Phrasing |
+|---|---|---|---|
+| 1 | ADR-022 (Recon-as-pre-scan-helpers) | shieldscan-docs SPEC §13 | Canonical |
+| 2 | ADR-023 (NativeRunner OutputFile mode) | shieldscan-docs SPEC §13 | Variation: emphasizes threshold-override mechanism explicitly |
+| 3 | ADR-024 (RawFinding schema extension) | shieldscan-docs SPEC §13 | Canonical |
+| 4 | ADR-025 (Findings-ingest direct DB-write) | shieldscan-api DRIFT-LOG | Canonical |
+| 5 | ADR-026 (DockerRunner framework + lazy warm pool) | shieldscan-docs SPEC §13 | Variation: short parenthetical "architectural commitment cost vs alternative cost" |
+| 6 | ADR-027 (RawFinding.Metadata field) | shieldscan-docs SPEC §13 | Canonical |
+
+4 of 6 invocations use canonical phrasing; ADR-023 + ADR-026 use semantically-equivalent variations. Variations are preserved as-written in their respective ADRs; future ADRs invoking the meta-principle should use canonical phrasing OR cross-reference §14.1 directly.
+
+**Authorship note.** ADR-022 hosts the canonical phrasing as a forward-pin to the M6/M7 corpus, but explicitly self-disclaims being the threshold-override application — that role is filled by ADR-023 (first APPLIED). ADR-024 retroactively counted ADR-022 as 1st invocation. The corpus has internal ambiguity about authorship vs application; §14.1 supersedes the authorship question by establishing the meta-principle at section-level, separate from any individual ADR.
+
+**When to invoke.** ADR drafters should invoke §14.1 when:
+
+1. An architectural decision is being made at lower-than-typical-threshold count (e.g., 2 instances) because the alternative cost is high
+2. An architectural decision is being deferred at higher-than-typical-threshold count (e.g., 5+ instances) because the alternative cost is low
+3. Cost-asymmetry is the primary justification for the decision direction; symmetric framing would mislead readers about the reasoning
+
+**When NOT to invoke.** §14.1 is NOT a generic "make architectural decisions wisely" frame. Routine decisions made on standard threshold-counting do not invoke §14.1; they apply standard project-corpus thresholds (e.g., DEVELOPMENT-PATTERNS' 3-instance promotion). §14.1 specifically applies when threshold-counting would mislead the decision direction.
+
+**Tension acknowledgment.** Meta-principles risk becoming checklist items ("did you invoke §14.1?") rather than genuine reasoning frames. The frame's value is in articulating *why* a decision direction was chosen against threshold-counting, not in providing rhetorical cover for any decision direction. Drafters should invoke §14.1 only when cost-asymmetry is genuinely load-bearing for the decision; otherwise, standard threshold-counting reasoning suffices.
+
+**Cross-references.**
+- ADR-022 (originating ADR; canonical phrasing host; self-disclaimed application)
+- ADR-023 (first APPLIED instance; phrasing variation)
+- ADR-024 (3rd invocation; established schema-extension precedent)
+- ADR-025 (consumer-side; lives in shieldscan-api DRIFT-LOG)
+- ADR-026 (DockerRunner framework; phrasing variation)
+- ADR-027 (RawFinding.Metadata; canonical phrasing; Phase 5.B Task 7.2)
+- shieldscan-engine DEVELOPMENT-PATTERNS.md entry #5 (cleanup-uses-detached-context; 3-instance promotion via different threshold mechanism; not a §14.1 invocation but illustrates the standard threshold path)
+
+### 14.x Future Meta-Principles
+
+Reserved for future promotions. Candidates that have not yet reached 3-ADR threshold:
+
+- *To be enumerated as candidates emerge.*
+
+---
+
+## 15. Glossary
 
 | Term | Definition |
 |---|---|
