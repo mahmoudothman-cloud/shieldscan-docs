@@ -850,6 +850,7 @@ The full per-field listing as of M6-close-followup (post-ADR-024):
 | Categorical (ADR-024) | Tags | `tags` | []string | optional | fine-grained tags; MUST NOT duplicate `engine_category` |
 | Categorical (ADR-024) | CVSSVector | `cvss_vector` | string | optional | canonical CVSS 3.1 vector (`"CVSS:3.1/AV:N/..."`) |
 | Categorical (ADR-024) | AdditionalCWEs | `additional_cwes` | []string | optional | secondary CWE strings beyond primary `cwe_id` |
+| Categorical (ADR-027) | Metadata | `metadata` | map[string]string | optional | per-tool structured payload as key-value pairs; per-tool key contracts documented in consumer package docstrings; Nmap canonical first consumer (Task 7.2): 6 required keys (host, port, protocol, state, service, target) + 5 conditional (product, version, extra_info, cpe, tunnel); future Trivy/SQLMap/ZAP/MobSF consumers inherit pattern |
 | Metadata | RawOutputRef | `raw_output_ref` | string | optional | future R2-staged output reference |
 | Metadata | DiscoveredAt | `discovered_at` | string | optional | RFC3339 timestamp |
 | Metadata | Fingerprint | `fingerprint` | string | optional | SHA-256 deterministic dedup key |
@@ -2110,6 +2111,100 @@ Negative:
 - shieldscan-docs `docs/plans/2026-05-03-warm-pool-primitive-design.md`: design doc artifact (Phase 2 corrections pending).
 - IMPLEMENTATION-PLAN Task 7.5: warm pool primitive obligation.
 - SPEC §3.2: shieldscan-engine repository structure (path drift corrected per this commit).
+
+### ADR-027: RawFinding.Metadata field for per-tool structured payload
+**Status:** Accepted (2026-05-06, Task 7.2)
+
+**Context.**
+ADR-024 (RawFinding schema extension) established the canonical RawFinding shape with typed evidence fields (TargetURL, Parameter, Payload, Request, Response for web/API; CodeFile, CodeLine, CodeSnippet for source; MobileOS, Permission, ComponentName for mobile; CipherSuite, CertSubject for SSL/TLS) plus four ADR-024 categorical fields (References, Tags, CVSSVector, AdditionalCWEs).
+
+Task 7.2 (Nmap as first DockerRunner consumer) brainstorming surfaced that the typed-evidence-fields pattern doesn't fit Nmap's per-port structured output (host, port, protocol, service, product, version, extra_info, CPE identifiers, tunnel attribute). Three accommodation options were considered:
+
+- **Option (a) — Schema extension via dedicated Metadata field:** add `Metadata map[string]string` to RawFinding; per-tool structured payload as key-value pairs. Type-safe map access; extensible without schema change per consumer. Selected.
+- **Option (b) — Tags namespacing:** use existing `Tags []string` with namespaced keys (`"service:ssh"`, `"product:OpenSSH"`, etc.). Zero schema change. Rejected: stringly-typed; downstream parsing burden for M9 CVE matching; namespace convention breaks if service names contain `:`.
+- **Option (c) — Repurpose typed fields:** TargetURL=`tcp://host:port`; Parameter=port number; service/product/version into Description only. Rejected: semantic misuse of TargetURL (documented for HTTP URLs); structured-data-loss for M9 downstream consumption.
+
+The asymmetric-cost meta-principle applies: cost of "schema extension via ADR" is one ADR + small SPEC §7.3 update + one map field across consumers (per ADR-024 precedent: cheap). Cost of "every M7 consumer reinvents Tags namespace conventions" compounds across 5 consumers (Nmap, Trivy, SQLMap, ZAP, MobSF) + creates downstream parsing burden + loses type safety.
+
+**Decision.**
+Add `Metadata map[string]string` field to RawFinding (`internal/events/events.go`). JSON tag `json:"metadata,omitempty"` ensures backward-compatibility for shieldscan-api findings-ingest consumer (per ADR-025, lives in shieldscan-api): nil/empty Metadata gets omitted from serialized output; existing consumer code unmarshalling RawFinding to a struct without the new field will ignore it (Go's encoding/json default behavior).
+
+Per-tool consumer pattern: each tool documents its Metadata key contract in package docstrings. Required keys (always present) + conditional keys (omitted when empty). Naming convention: lowercase snake_case keys; tool-namespaced if cross-consumer collision risk (e.g., `"nmap.target"` vs `"trivy.target"` — though most keys are tool-naturally-distinct so namespacing is per-key judgment, not blanket prefix).
+
+**Nmap consumer (Task 7.2; first canonical consumer):**
+- Required keys: `host`, `port`, `protocol`, `state`, `service`, `target`
+- Conditional keys: `product`, `version`, `extra_info`, `cpe`, `tunnel`
+
+**Future M7 consumers (forward-pinned per Task 7.2 design doc §8):**
+- **Trivy (Task 7.1):** SBOM components — `component_name`, `component_version`, `package_manager`, `license`, `installed_path`
+- **SQLMap (Task 7.6):** SQLi technique details — `injection_type`, `dbms`, `parameter_position`, `payload_technique`
+- **ZAP (Task 7.3):** HTTP context beyond TargetURL — `http_method`, `request_headers_hash`, `response_code`, `attack_vector`
+- **MobSF (Task 7.4):** APK/IPA analysis — `manifest_permission`, `component_type`, `intent_filter`, `obfuscation_score`
+
+These are illustrative; canonical key contracts land in each consumer task's design doc + package docstring.
+
+**M9 AI Pipeline downstream consumption** (forward-pin): CVE matching consumes `cpe` + `product` + `version` from Nmap; `component_name` + `component_version` from Trivy; etc. Severity adjustment based on CVE matches. Cross-tool finding correlation via shared keys (e.g., `host` matches Nmap finding to ZAP finding for same target).
+
+**M8 Recon-First Pipeline downstream consumption** (forward-pin): Nmap structured port/service/version data feeds downstream scanners' target lists. Recon pipeline reads Metadata map directly; no parsing required.
+
+**Rationale.**
+ADR-024 establishes the additive-RawFinding-schema-extension pattern. ADR-027 invokes the same pattern for the 6th time across the project corpus (after ADR-022 recon-as-pre-scan-helpers; ADR-023 NativeRunner OutputFile mode; ADR-024 RawFinding schema extension; ADR-025 Findings-ingest direct DB-write [shieldscan-api]; ADR-026 DockerRunner framework). Per the canonical asymmetric-cost meta-principle established by ADR-022 and ADR-024: **architectural commitments are made when the alternative is operationally worse, not when a generic threshold is met.** The 6-instance pattern is well past 3-instance threshold; DEVELOPMENT-PATTERNS promotion candidate evaluated in Phase 5.D (forthcoming this session).
+
+Schema-evolution precedent: small, additive, backward-compatible field additions per ADR are the established pattern. ADR-027 extends it to per-tool structured payloads without breaking the typed-evidence-fields pattern that ADR-024 established. Both patterns coexist: typed fields for cross-tool common evidence (TargetURL, Severity, etc.); Metadata map for tool-specific structured data.
+
+**Consequences.**
+
+Positive:
+- Per-tool structured payload preserved end-to-end (Nmap → RawFinding → ADR-025 ingest → M9 AI Pipeline → M8 Recon)
+- Schema evolution remains additive; new M7 consumers (Trivy, SQLMap, ZAP, MobSF) inherit the field without per-consumer schema changes
+- Type-safe map access (Go's `map[string]string`); not stringly-typed
+- Backward-compatibility via `omitempty` JSON tag; existing shieldscan-api findings-ingest consumer unaffected
+- M9 CVE matching downstream consumption gets first-class data access
+
+Negative:
+- Map keys are stringly-typed within the map (no compile-time enforcement of key contracts)
+- Per-tool key contracts must be documented in package docstrings; documentation discipline becomes load-bearing
+- Cross-consumer key conflict risk (mitigated by per-key namespace judgment but not enforced)
+- Schema-evolution-via-map can mask design pressure that should land as new typed fields
+
+**Anti-patterns this prevents.**
+- Typed-fields-for-everything inflation: ADR-024's 4 schema extensions covered cross-tool common evidence; ADR-027 prevents pressure to add typed fields per per-tool concept (e.g., would ADR-024-pattern require adding `NmapPort int`, `NmapService string`, `TrivyComponent string` etc. to RawFinding? Map field eliminates that pressure).
+- Tags-as-structured-data abuse: ADR-027 prevents reinventing namespace conventions in `Tags []string` for structured per-tool payloads. ADR-024 documents Tags as fine-grained tags MUST NOT duplicate `engine_category`; using Tags for `"service:ssh"` etc. would conflict with that contract.
+- Stringly-typed-everything: ADR-027 confines stringly-typing to keys-within-the-map; the field itself is type-safe `map[string]string`.
+- Per-consumer-schema-churn: ADR-027 prevents each new M7 consumer task from triggering its own schema-extension ADR.
+
+**Triggers to revisit.**
+1. **First M7 consumer hits Metadata key contract conflict.** When Trivy + SQLMap + ZAP + MobSF land, verify no two consumers use same key for different semantics. If conflict, namespace prefixes may need to become enforced convention (e.g., `"nmap.host"` always; never bare `"host"`).
+2. **M9 AI Pipeline implementation surfaces schema gap.** If CVE matching needs a typed field that map representation can't cleanly support (e.g., versioned CPE comparison requiring native type semantics), evaluate schema extension via new ADR.
+3. **Per-tool key contract documentation drift.** If consumer package docstrings drift from actual emitted keys, surface for remediation.
+4. **Asymmetric-cost meta-principle promotion.** Evaluated in Phase 5.D (6-instance threshold met across ADR-022/023/024/025/026/027).
+
+**Forcing functions.**
+- **JSON `omitempty` tag on Metadata field:** ensures nil/empty Metadata serializes cleanly; backward-compatibility regression test would catch breakage.
+- **Per-tool consumer package docstring documents Metadata key contract:** if docstring drifts from emitted keys, the discrepancy is visible during code review.
+- **Phase 5.A design doc post-implementation alignment (commit aa0d034):** documents the 6-required + 5-conditional Nmap key contract; precedent for future consumer design docs.
+- **SPEC §7.3 schema extension (this commit):** authoritative source for Metadata field semantics; future consumer ADRs cross-reference this.
+
+**Open follow-ups.**
+- Phase 5.C (forthcoming this session): DEVELOPMENT-PATTERNS entry for cleanup-uses-parent-context anti-pattern (3rd instance threshold met; M6.7 Wapiti + ADR-026 DockerRunner.Run + Task 7.2 runMain).
+- Phase 5.D (forthcoming this session): asymmetric-cost meta-principle promotion evaluation (6-instance threshold).
+- Future Trivy/SQLMap/ZAP/MobSF consumer tasks: each lands per-tool Metadata key contract.
+- M9 AI Pipeline implementation: consumes Metadata for CVE matching + cross-tool finding correlation.
+- M8 Recon-First Pipeline implementation: consumes Metadata for downstream scanner target list population.
+- shieldscan-api SQLAlchemy `RawFinding` model + Pydantic schema: synchronized extension (per ADR-024 coordination workflow); the columns-ready-vs-ingest-implementation distinction documented in §7.3 callout applies symmetrically.
+
+**Cross-references.**
+- ADR-022: Recon-as-pre-scan-helpers (asymmetric-cost meta-principle, 1st invocation).
+- ADR-023: NativeRunner OutputFile mode (asymmetric-cost meta-principle, 2nd invocation; framework precedent for tool-specific config).
+- ADR-024: RawFinding schema extension (asymmetric-cost meta-principle, 3rd invocation; direct schema-extension pattern precedent for ADR-027).
+- ADR-025: Findings-ingest direct DB-write (asymmetric-cost meta-principle, 4th invocation; consumer-side; lives in shieldscan-api repo, not in this SPEC).
+- ADR-026: DockerRunner framework + lazy warm pool (asymmetric-cost meta-principle, 5th invocation; framework that ADR-027 extends).
+- shieldscan-engine commit 872b2b0: Task 7.2 engine implementation; lands Metadata field at internal/events/events.go.
+- shieldscan-docs commit f87e923: Task 7.2 design doc; documents per-tool key contract in §3.4.
+- shieldscan-docs commit aa0d034: Task 7.2 design doc post-implementation alignment.
+- SPECIFICATION.md §7.3: RawFinding schema documentation (Metadata field added per this ADR).
+- shieldscan-docs Phase 5.C (forthcoming this session): DEVELOPMENT-PATTERNS entry for cleanup-uses-parent-context.
+- shieldscan-docs Phase 5.D (forthcoming this session): asymmetric-cost meta-principle promotion evaluation.
 
 ---
 
