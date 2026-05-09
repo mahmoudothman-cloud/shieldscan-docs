@@ -2016,7 +2016,7 @@ Establish two M7 framework types in shieldscan-engine:
 1. **DockerRunner** (`internal/tools/docker/dockerrunner.go`, this ADR): warm-pool wrapper for short-lived CLI-shaped Docker tools. Wraps WarmPool primitive (`internal/tools/docker/warmpool.go`) which provides lazy spin-up + max-bound + cleanup-between-checkouts + optional health check. Symmetric with NativeRunner (per ADR-023 OutputFile mode framework precedent).
    - Consumers: Trivy (M7.1), Nmap (M7.2), SQLMap (M7.6).
 
-2. **DockerServiceRunner** (`internal/tools/docker_service.go`, M5.3 + ADR-006 + ADR-008; framework expansion via Task 7.5b future): HTTP-API wrapper for persistent Docker services. Long-lived service containers; runner makes HTTP requests; image pinning per ADR-006 risk #14.
+2. **DockerServiceRunner** (`internal/tools/docker/service/`, Task 7.5b commit 1306ca8 — replaces the original `internal/tools/docker_service.go` from M5.3 + ADR-006 + ADR-008 per V8 Option (c) Replace; see ContainerFactory Extension addendum below): HTTP-API wrapper for persistent Docker services. Long-lived service containers; runner makes HTTP requests; image pinning per ADR-006 risk #14.
    - Consumers: ZAP (M7.3), MobSF (M7.4).
 
 ADR-006's "persistent Docker services" classification is refined: the term applies to ZAP and MobSF only post-ADR-026; Trivy and SQLMap reclassify to DockerRunner warm pool.
@@ -2079,7 +2079,7 @@ Negative:
 - Single-type-fits-all framework: Two framework types align with two operational shapes (CLI vs HTTP-API).
 
 **Triggers to revisit.**
-1. **Task 7.5b DockerServiceRunner framework expansion.** When framework lands, verify HTTP session management + version drift mitigation + health checks satisfy ADR-006 risk #14 + ADR-008 MobSF requirements.
+1. **Task 7.5b DockerServiceRunner framework expansion.** ~~When framework lands, verify HTTP session management + version drift mitigation + health checks satisfy ADR-006 risk #14 + ADR-008 MobSF requirements.~~ **RESOLVED** via shieldscan-engine commit 1306ca8 + ContainerFactory Extension addendum above (Phase 5.B; this commit). HTTP session management (`Client.Get/Post/PollUntil` + `AuthFunc`); version drift mitigation (digest pinning per consumer per Q9 lock); health checks (readiness probe at spin-up via `waitForReady` per Q6 lock; HealthCheck field nil v1 per Q9 lock with promotion path to checkout-time probe forward-pinned).
 2. **First DockerRunner consumer (M7.1 Trivy).** Validate the framework abstraction against real tool integration. If consumer task surfaces framework gaps (e.g., output streaming for large SBOMs, exit-code-leniency edge cases), iterate via additive framework changes.
 3. **Cleanup-uses-parent-context anti-pattern at 3rd instance.** Currently 2nd instance (M6.7 Wapiti + Phase 3 DockerRunner). 3rd instance triggers DEVELOPMENT-PATTERNS promotion.
 4. **Compile-time interface assertion at 3rd instance.** Currently 2nd instance (NativeRunner native.go:147 + DockerRunner). 3rd instance triggers promotion.
@@ -2091,8 +2091,39 @@ Negative:
 - `TestWarmPool_Shutdown_UnblocksWaitingCheckout`: done-channel signal contract pin; future engineer reverting the done-channel pattern triggers test failure.
 - ADR-026 cross-references in shieldscan-engine `internal/tools/runner.go` docstring + commit f5d77c8 message body: future engineers searching for runner-type assignments find this ADR via either docstring read or git log search.
 
+**ContainerFactory Extension (Task 7.5b; shieldscan-engine commit 1306ca8).**
+
+Task 7.5b DockerServiceRunner framework expansion surfaced Phase 0 verification finding V2: WarmPool's `spinUp` was hardcoded to exec-shape containers (`Cmd: [sleep infinity]`; no `PortBindings`; private function). Service-shape consumers (ZAP, MobSF) need port mapping + readiness probing without `Cmd` override. Two architectural options were considered:
+
+- **Option (α) — Framework extension via ContainerFactory hook (~30-50 LoC additive):** add `ContainerFactoryFunc` type + `Config.ContainerFactory` field + `DefaultContainerFactory` exported function; `spinUp` routes through the factory. Preserves Task 7.2 Nmap consumer backward-compat (nil ContainerFactory → DefaultContainerFactory → existing newContainer behavior). Selected.
+- **Option (β) — Parallel service-shape pool primitive (~150 LoC):** new ServicePool type alongside WarmPool; duplicates lazy-spin-up + max-bound + cleanup-between-checkouts logic. Rejected: violates ADR-026's single-WarmPool-primitive contract; multiplies test surface; framework-asymmetric.
+
+Option (α) preserves the WarmPool primitive as the canonical container-pool abstraction. A single primitive serves three container shapes:
+
+- **Exec-shape** (`DefaultContainerFactory`): DockerRunner consumers — Nmap (Task 7.2 commit 872b2b0); future Trivy (Task 7.1) and SQLMap (Task 7.6).
+- **Service-shape** (`ServiceContainerFactory` in `internal/tools/docker/service/spinup.go`): DockerServiceRunner consumers — future ZAP (Task 7.3) and MobSF (Task 7.4); configures `PortBindings` (127.0.0.1:dynamic) + `ContainerInspect` for dynamic host-port discovery + readiness probing.
+- **Future shapes:** additional factories accommodate gRPC-shaped, batch-shaped, or sidecar-paired containers without further WarmPool changes.
+
+Implementation surface (per shieldscan-engine commit 1306ca8):
+
+- `ContainerFactoryFunc func(ctx context.Context, cli dockerClient, image string, log zerolog.Logger) (*Container, error)` — new exported type in `internal/tools/docker/warmpool.go`.
+- `Config.ContainerFactory ContainerFactoryFunc` — new field on WarmPool config; nil → DefaultContainerFactory.
+- `DefaultContainerFactory` — new exported function; replicates existing newContainer behavior.
+- `spinUp` body change — routes through `p.factory(ctx, p.cli, p.image, p.log)` (~3 LoC).
+- `DockerClient = dockerClient` exported type alias added to `internal/tools/docker/container.go` to enable cross-package factory function literals (Task 7.5b D1 deviation).
+- `ContainerInspect` method added to the `dockerClient` interface — required for dynamic host-port discovery in ServiceContainerFactory (Task 7.5b D2 deviation).
+- `NewServiceContainer(id, image, baseURL, cli, log) *Container` exported constructor + `BaseURL` exported field on Container struct — enables service-shape Container construction from external packages (Task 7.5b D3 deviation).
+
+Backward-compat verification (per shieldscan-engine commit 1306ca8 quality gate):
+
+- All 21+ existing Task 7.5a + Task 7.2 tests pass unchanged.
+- 4 new ContainerFactory-specific tests added (nil-routing-to-default; custom-factory-invoked; factory-error-propagates; DefaultContainerFactory delegation).
+- DockerRunner consumers (Nmap shipped; Trivy/SQLMap forthcoming) require zero changes; default-routes through DefaultContainerFactory implicitly.
+
+This extension is additive and backward-compatible; framework-symmetric. WarmPool remains the single container-pool primitive; specialization happens at the factory layer rather than the pool layer. Per asymmetric-cost-aware reasoning: extension cost (~30-50 LoC additive + 4 new tests + 3 D1/D2/D3 cross-package interface deviations) is bounded; alternative cost (parallel pool primitive at ~150 LoC + duplicated concurrency contract + asymmetric framework surface) compounds across future container shapes.
+
 **Open follow-ups.**
-- Task 7.5b: DockerServiceRunner framework expansion (HTTP-API persistent services).
+- ~~Task 7.5b: DockerServiceRunner framework expansion (HTTP-API persistent services).~~ **RESOLVED** via shieldscan-engine commit 1306ca8 + ContainerFactory Extension addendum above (Phase 5.B; this commit).
 - Per-tool consumer tasks: M7.1 Trivy, M7.2 Nmap, M7.3 ZAP, M7.4 MobSF, M7.6 SQLMap.
 - Asymmetric-cost meta-principle DEVELOPMENT-PATTERNS promotion candidate (5th instance well past threshold).
 - Cleanup-uses-parent-context anti-pattern tracking (2nd instance; promotion at 3rd).
@@ -2108,8 +2139,10 @@ Negative:
 - ADR-023: NativeRunner OutputFile mode (framework precedent; DockerRunner symmetric).
 - ADR-024: RawFinding schema extension (asymmetric-cost meta-principle precedent).
 - shieldscan-engine commit f5d77c8: warm pool primitive + DockerRunner framework implementation.
+- shieldscan-engine commit 1306ca8: Task 7.5b DockerServiceRunner framework + ContainerFactory hook extension; ContainerFactory Extension addendum above documents the framework expansion.
 - shieldscan-engine `internal/tools/runner.go`: ToolRunner contract docstring + three-runner-type architecture documentation.
 - shieldscan-docs `docs/plans/2026-05-03-warm-pool-primitive-design.md`: design doc artifact (Phase 2 corrections pending).
+- shieldscan-docs `plans/2026-05-09-task-7.5b-docker-service-runner-design.md` (commit 3067c92 design doc revision; commit bb09f4e Phase 5.A post-implementation alignment): Task 7.5b design doc; V2 Option (α) ContainerFactory hook resolution lock.
 - IMPLEMENTATION-PLAN Task 7.5: warm pool primitive obligation.
 - SPEC §3.2: shieldscan-engine repository structure (path drift corrected per this commit).
 
