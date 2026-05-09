@@ -226,12 +226,13 @@ shieldscan-engine/
 │   ├── tools/
 │   │   ├── runner.go              # ToolRunner interface
 │   │   ├── native.go              # NativeRunner (subprocess)
-│   │   ├── docker_service.go      # DockerServiceRunner (HTTP)
 │   │   ├── docker/                # M7.5a + ADR-026
 │   │   │   ├── container.go       # Docker SDK Container abstraction
 │   │   │   ├── client_adapter.go  # productionClient adapter
-│   │   │   ├── warmpool.go        # WarmPool primitive (lazy spin-up)
-│   │   │   └── dockerrunner.go    # DockerRunner framework type
+│   │   │   ├── warmpool.go        # WarmPool primitive (lazy spin-up; ContainerFactory hook)
+│   │   │   ├── dockerrunner.go    # DockerRunner framework type
+│   │   │   └── service/           # DockerServiceRunner (HTTP-API tools; ZAP, MobSF)
+│   │   │                          # (M7.5b commit 1306ca8; replaces docker_service.go)
 │   │   ├── nuclei.go
 │   │   ├── zap.go
 │   │   ├── semgrep.go
