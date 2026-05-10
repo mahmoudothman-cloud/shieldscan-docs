@@ -232,9 +232,9 @@ shieldscan-engine/
 │   │   │   ├── warmpool.go        # WarmPool primitive (lazy spin-up; ContainerFactory hook)
 │   │   │   ├── dockerrunner.go    # DockerRunner framework type
 │   │   │   └── service/           # DockerServiceRunner (HTTP-API tools; ZAP, MobSF)
-│   │   │                          # (M7.5b commit 1306ca8; replaces docker_service.go)
+│   │   │       │                   # (M7.5b commit 1306ca8; replaces docker_service.go)
+│   │   │       └── zap/           # ZAP DAST consumer (M7.3; commit e905afe)
 │   │   ├── nuclei.go
-│   │   ├── zap.go
 │   │   ├── semgrep.go
 │   │   ├── nmap.go
 │   │   ├── mobsf.go               # ← Mobile security
