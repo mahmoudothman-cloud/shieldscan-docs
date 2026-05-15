@@ -120,6 +120,31 @@ require (
 
     github.com/aws/aws-sdk-go-v2 v1.32.2
     github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
+
+    // AWS SDK Go v2 transitive dependencies (Task 7.4 D-PLAN-6;
+    // resolved by `go get` during MobSF consumer R2 client
+    // integration; shieldscan-engine commit c15a60d). The two
+    // pins above (aws-sdk-go-v2 + service/s3) were pre-existing;
+    // the entries below complete the transitive enumeration per
+    // CLAUDE.md Rule 4 ("any new module not in VERSIONS.md").
+    github.com/aws/aws-sdk-go-v2/config v1.27.43
+    github.com/aws/aws-sdk-go-v2/credentials v1.17.41
+    github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.17
+    github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.21
+    github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.21
+    github.com/aws/aws-sdk-go-v2/internal/ini v1.8.1
+    github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.21
+    github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.6
+    github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.0
+    github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.4.2
+    github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.2
+    github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.2
+    github.com/aws/aws-sdk-go-v2/service/sso v1.24.2
+    github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.2
+    github.com/aws/aws-sdk-go-v2/service/sts v1.32.2
+    github.com/aws/smithy-go v1.22.0
+    github.com/jmespath/go-jmespath v0.4.0
+
     github.com/stretchr/testify v1.9.0
     github.com/rs/zerolog v1.33.0
     github.com/spf13/cobra v1.8.1
