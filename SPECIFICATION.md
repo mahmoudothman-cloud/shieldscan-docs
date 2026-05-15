@@ -233,11 +233,11 @@ shieldscan-engine/
 │   │   │   ├── dockerrunner.go    # DockerRunner framework type
 │   │   │   └── service/           # DockerServiceRunner (HTTP-API tools; ZAP, MobSF)
 │   │   │       │                   # (M7.5b commit 1306ca8; replaces docker_service.go)
-│   │   │       └── zap/           # ZAP DAST consumer (M7.3; commit e905afe)
+│   │   │       ├── zap/           # ZAP DAST consumer (M7.3; commit e905afe)
+│   │   │       └── mobsf/         # MobSF MAST consumer (M7.4; commit c15a60d)
 │   │   ├── nuclei.go
 │   │   ├── semgrep.go
 │   │   ├── nmap.go
-│   │   ├── mobsf.go               # ← Mobile security
 │   │   ├── sslyze.go              # ← SSL/TLS
 │   │   ├── recon.go               # ← Subfinder + httpx
 │   │   ├── gitleaks.go            # ← Secrets in git history
