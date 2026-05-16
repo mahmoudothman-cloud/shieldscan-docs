@@ -1196,9 +1196,19 @@ Costs optimized via caching (50–70% reduction on repeated scans of same code),
 **Rationale:** Massive differentiator — scans assets clients didn't know existed. Zero extra cost because Subfinder/httpx run in seconds.
 
 ### ADR-008: MobSF for Mobile Security
-**Status:** Accepted (2026-04-18)
+**Status:** Accepted (2026-04-18); Amended (2026-05-11; ephemeral-default addendum per Task 7.4 + Task 7.5c V4 precedent)
 **Decision:** MobSF as persistent Docker service for all mobile scanning (APK, IPA, source).
 **Rationale:** Best open-source mobile security tool. Covers both platforms and both static + binary analysis. Zero licensing cost. REST API first-class integration.
+
+**Ephemeral-Default Refinement (Task 7.4; shieldscan-engine commit c15a60d).** Task 7.5c V4 verification (shieldscan-engine commit bfccef8) empirically demonstrated that ZAP `newSession` is session-state-only; user definitions + custom scan policies + per-policy attack-strength tuning persist across cleanup attempts (S7 PARTIAL_RESET orphan user records; S8 NOT_RESET custom scan policies; S9 NOT_RESET per-policy tuning). MobSF V5 forward-pin from Task 7.5b design (shieldscan-docs commit 3067c92) explicitly flagged analogous "Suppression / user / settings table persistence UNCLEAR" — same architectural failure mode possible.
+
+Per §14.1 asymmetric-cost meta-principle (this invocation enumerated as §14.1 row 7): bounded ephemeral container startup cost (~60–120s amortized poorly for low-frequency mobile scans per pricing tier §9.1) vs unbounded multi-tenant configuration-state-leakage risk where cleanup contract is UNCLEAR. Calculus tilts hard toward ephemeral default until empirical verification of MobSF `delete_scan` cleanup contract completeness.
+
+**Refined v1 architectural commitment:** MobSF persistent-service framework infrastructure preserved (per ADR-026 ContainerFactory hook); v1 consumer DEFAULT is `cfg.EphemeralContainer = true` (Task 7.4 Q5 lock). Warm-pool path forward-pinned to Task 7.5d empirical verification of MobSF `delete_scan` cleanup contract (analogous to Task 7.5c V4 plan-then-execute pattern). When Task 7.5d empirically verifies cleanup contract COMPLETE across configuration-scoped state (suppression registry + user accounts + instance settings + per-scan plugin tuning), warm-pool path becomes viable; flip Default to false. Until then, ephemeral is the architecturally-correct default (NOT transitional).
+
+**Backward-compat verification:** Framework-level commitment (ADR-026 ContainerFactory + DockerServiceRunner) unchanged; only consumer-default refined. Other future MobSF deployment topologies (e.g., dedicated single-tenant deployments where multi-tenant leak surface doesn't apply) may continue persistent-service path per their own architectural justification.
+
+**Asymmetric-cost-aware reasoning:** Ephemeral cost is bounded — measured in seconds; pricing tier §9.1 caps mobile scans. Cleanup-contract-uncertainty cost is unbounded — would ship multi-tenant data leakage if Task 7.5d empirically validates the same failure mode Task 7.5c V4 surfaced for analogous consumer. Calculus prefers verified-cost over unverified-cost in safety-relevant territory.
 
 ### ADR-009: Recon-First + Full 9-Category Coverage vs. Specialization
 **Status:** Accepted (2026-04-18)
@@ -2000,7 +2010,7 @@ Negative:
 **Status:** Accepted (2026-05-04, Task 7.5a)
 
 **Context.**
-M7 introduces 5 Docker-based scanning tools (Trivy, Nmap, MobSF, ZAP, SQLMap) extending the M6-shipped 9 native CLI tools. ADR-006 (Hybrid Native + Persistent Docker, refined 2026-04-18) established the broad architectural decision to use persistent Docker services for heavy tools, eliminating 2-3s per-scan container startup. ADR-008 (MobSF for Mobile Security) refined this for MobSF specifically as a persistent HTTP-API service.
+M7 introduces 5 Docker-based scanning tools (Trivy, Nmap, MobSF, ZAP, SQLMap) extending the M6-shipped 9 native CLI tools. ADR-006 (Hybrid Native + Persistent Docker, refined 2026-04-18) established the broad architectural decision to use persistent Docker services for heavy tools, eliminating 2-3s per-scan container startup. ADR-008 (MobSF for Mobile Security) refined this for MobSF specifically as a service-shape DockerServiceRunner consumer (default ephemeral v1; warm-pool path forward-pinned to Task 7.5d cleanup verification per ADR-008 ephemeral-default addendum).
 
 The M7.5 brainstorming surfaced that ADR-006's "persistent Docker services" framing implicitly conflated two distinct architectural shapes:
 - **HTTP-API persistent services:** ZAP and MobSF run as long-lived servers; runner makes HTTP requests; container lifecycle decoupled from individual scans.
@@ -2079,7 +2089,7 @@ Negative:
 - Single-type-fits-all framework: Two framework types align with two operational shapes (CLI vs HTTP-API).
 
 **Triggers to revisit.**
-1. **Task 7.5b DockerServiceRunner framework expansion.** ~~When framework lands, verify HTTP session management + version drift mitigation + health checks satisfy ADR-006 risk #14 + ADR-008 MobSF requirements.~~ **RESOLVED** via shieldscan-engine commit 1306ca8 + ContainerFactory Extension addendum above (Phase 5.B; this commit). HTTP session management (`Client.Get/Post/PollUntil` + `AuthFunc`); version drift mitigation (digest pinning per consumer per Q9 lock); health checks (readiness probe at spin-up via `waitForReady` per Q6 lock; HealthCheck field nil v1 per Q9 lock with promotion path to checkout-time probe forward-pinned).
+1. **Task 7.5b DockerServiceRunner framework expansion.** ~~When framework lands, verify HTTP session management + version drift mitigation + health checks satisfy ADR-006 risk #14 + ADR-008 MobSF requirements.~~ **RESOLVED** via shieldscan-engine commit 1306ca8 + ContainerFactory Extension addendum above (Phase 5.B; this commit). HTTP session management (`Client.Get/Post/PollUntil` + `AuthFunc`); version drift mitigation (digest pinning per consumer per Q9 lock); health checks (readiness probe at spin-up via `waitForReady` per Q6 lock; HealthCheck field nil v1 per Q9 lock with promotion path to checkout-time probe forward-pinned). (Framework-level infrastructure satisfied; consumer-default refined per ADR-008 ephemeral-default addendum — see Task 7.4 + Task 7.5c V4 precedent.)
 2. **First DockerRunner consumer (M7.1 Trivy).** Validate the framework abstraction against real tool integration. If consumer task surfaces framework gaps (e.g., output streaming for large SBOMs, exit-code-leniency edge cases), iterate via additive framework changes.
 3. **Cleanup-uses-parent-context anti-pattern at 3rd instance.** Currently 2nd instance (M6.7 Wapiti + Phase 3 DockerRunner). 3rd instance triggers DEVELOPMENT-PATTERNS promotion.
 4. **Compile-time interface assertion at 3rd instance.** Currently 2nd instance (NativeRunner native.go:147 + DockerRunner). 3rd instance triggers promotion.
@@ -2262,7 +2272,7 @@ Future ADRs may invoke documented meta-principles by reference (e.g., "Per §14.
 
 This frame is invoked when an architectural decision deserves attention before reaching a generic threshold OR when a generic threshold is reached but the decision deserves *not* being made because the alternative isn't operationally worse.
 
-**Invocation enumeration.** As of 2026-05-06, the meta-principle has been invoked in 6 ADRs across the project corpus:
+**Invocation enumeration.** As of 2026-05-11, the meta-principle has been invoked in 7 ADRs across the project corpus:
 
 | # | ADR | Repo | Phrasing |
 |---|---|---|---|
@@ -2272,8 +2282,9 @@ This frame is invoked when an architectural decision deserves attention before r
 | 4 | ADR-025 (Findings-ingest direct DB-write) | shieldscan-api DRIFT-LOG | Canonical |
 | 5 | ADR-026 (DockerRunner framework + lazy warm pool) | shieldscan-docs SPEC §13 | Variation: short parenthetical "architectural commitment cost vs alternative cost" |
 | 6 | ADR-027 (RawFinding.Metadata field) | shieldscan-docs SPEC §13 | Canonical |
+| 7 | ADR-008 (MobSF ephemeral-default addendum) | shieldscan-docs SPEC §13 | Canonical (bounded ephemeral cost vs unbounded cleanup-contract-uncertainty risk; Task 7.4 + Task 7.5c V4 precedent; engine commits c15a60d + bfccef8) |
 
-4 of 6 invocations use canonical phrasing; ADR-023 + ADR-026 use semantically-equivalent variations. Variations are preserved as-written in their respective ADRs; future ADRs invoking the meta-principle should use canonical phrasing OR cross-reference §14.1 directly.
+5 of 7 invocations use canonical phrasing; ADR-023 + ADR-026 use semantically-equivalent variations. Variations are preserved as-written in their respective ADRs; future ADRs invoking the meta-principle should use canonical phrasing OR cross-reference §14.1 directly.
 
 **Authorship note.** ADR-022 hosts the canonical phrasing as a forward-pin to the M6/M7 corpus, but explicitly self-disclaims being the threshold-override application — that role is filled by ADR-023 (first APPLIED). ADR-024 retroactively counted ADR-022 as 1st invocation. The corpus has internal ambiguity about authorship vs application; §14.1 supersedes the authorship question by establishing the meta-principle at section-level, separate from any individual ADR.
 
