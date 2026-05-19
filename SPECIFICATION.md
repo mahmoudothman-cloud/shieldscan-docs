@@ -266,6 +266,8 @@ shieldscan-engine/
     └── internal/
 ```
 
+**Phase 5.C update (2026-05-19; Task 7.1):** Trivy directory layout shipped as `internal/tools/docker/trivy/` (package directory; 7 files: `types.go` + `parser.go` + `scan.go` + `trivy.go` + `parser_test.go` + `scan_test.go` + `integration_test.go` + `testdata/`) per Q4 plan §3.5 concretization + Phase 1 implementation (shieldscan-engine commit `d4028d0`). Same directory-layout drift pattern as Task 7.4 MobSF (`mobsf.go` singular → `mobsf/` package per Phase 5.C `767a99a`). M5-era SPEC §3.2 singular `trivy.go` framing (line 248 above) preserved per historical-authority discipline; current implementation reality is package-based per DockerRunner-shape consumer convention.
+
 ### 3.3 Technology Justifications
 
 See Section 13 (ADRs) for detailed rationale.
