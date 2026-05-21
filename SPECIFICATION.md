@@ -2134,6 +2134,41 @@ Backward-compat verification (per shieldscan-engine commit 1306ca8 quality gate)
 
 This extension is additive and backward-compatible; framework-symmetric. WarmPool remains the single container-pool primitive; specialization happens at the factory layer rather than the pool layer. Per asymmetric-cost-aware reasoning: extension cost (~30-50 LoC additive + 4 new tests + 3 D1/D2/D3 cross-package interface deviations) is bounded; alternative cost (parallel pool primitive at ~150 LoC + duplicated concurrency contract + asymmetric framework surface) compounds across future container shapes.
 
+### ADR-026 Addendum: Mounts Extension (Task 7.5e; 2026-05-20)
+
+**Context.** First DockerRunner integration test (Trivy Task 7.1 P1.8) surfaced D-PLAN-3 framework gap — `DefaultContainerFactory` lacked Mounts/socket/bind-mount support. Trivy fs-mode real-container scans require host bind-mount (host scan-target path → container scan path); integration tests `t.Skip`'d pending framework extension. Task 7.5e Phase 0 v2 empirical verification (V1.s-ii OCI-sufficient verdict) narrowed framework-extension scope: image-mode works via OCI registry pull without Docker socket; only fs-mode bind-mount required.
+
+**Decision.** Extend `WarmPool` `Config` with optional `Mounts []mount.Mount` field; `WarmPool.New()` internally constructs closure threading `cfg.Mounts` to `newContainer` when `cfg.ContainerFactory` is nil AND `cfg.Mounts` is non-empty. `DefaultContainerFactory` signature unchanged (passes nil mounts to `newContainer`; backward-compat preserved); `ContainerFactoryFunc` signature unchanged (service-shape `ServiceContainerFactory` + custom factories unaffected). `newContainer` signature extends to accept `mounts []mount.Mount` parameter; `HostConfig.Mounts` populated when non-nil.
+
+**Architectural pattern (Q1 α.ii closure capture).** Three-branch decision tree at `WarmPool.New()`:
+
+1. `cfg.ContainerFactory != nil` → custom factory used as-is (service-shape consumers + custom factories preserved)
+2. `cfg.ContainerFactory == nil && cfg.Mounts != nil` → internal closure wraps `newContainer` with captured `cfg.Mounts`
+3. `cfg.ContainerFactory == nil && cfg.Mounts == nil` → `DefaultContainerFactory` (pre-7.5e behavior preserved)
+
+Closure capture-by-value (`mounts := cfg.Mounts`) ensures slice header isolation; caller mutation of `cfg.Mounts` post-`New()` does not affect closure execution.
+
+**Scope (Q5 (a) DockerRunner-only).** Extension applies to DockerRunner exec-shape framework only. Service-shape DockerServiceRunner consumers (ZAP, MobSF) unaffected — `ServiceContainerFactory` implements `ContainerFactoryFunc` independently without reading `Config.Mounts`. Parallel DockerServiceRunner Mounts extension forward-pinned: trigger phrase ***"Begin DockerServiceRunner Mounts parallel extension task"*** if service-shape consumer surfaces empirical bind-mount need.
+
+**Consumer-side guidance — Trivy Task 7.5e adoption pattern.** Single bind-mount with env-overridable source path:
+
+```go
+scanBasePath := os.Getenv("TRIVY_SCAN_BASE_PATH")
+if scanBasePath == "" { scanBasePath = "/tmp" }
+mounts := []mount.Mount{{Type: mount.TypeBind, Source: scanBasePath, Target: "/scan", ReadOnly: true}}
+docker.New(docker.Config{Image, MaxSize, Mounts: mounts, ...}, ...)
+```
+
+Future consumers populate `Config.Mounts` with their specific bind-mount needs. `ReadOnly:true` recommended for read-only scan workloads (defense-in-depth + tenant isolation).
+
+**Bonus correctness fix (D-PLAN-7.5e-Phase2-Entrypoint).** Phase 2 integration testing surfaced latent framework correctness bug — `newContainer` did NOT override image `ENTRYPOINT`, causing containers using tools with declared `ENTRYPOINT` (Trivy, Nmap) to fail warm-pool `sleep infinity` initialization. Fix: `Entrypoint: []string{}` added to `container.Config` (canonical Docker SDK pattern). Universal benefit across all DockerRunner consumers; not Mounts-specific. 26th cumulative framing-drift catch this session-tail (latent correctness bug surfaced by empirical real-Docker integration testing).
+
+**Operational validation.** Trivy integration tests (`TestIntegration_TrivyContainer_Alpine` + `TestIntegration_TrivyFs_TestData`) lifted from `t.Skip` and pass real-Docker end-to-end (~12.3s + ~10.8s respectively). D-PLAN-3 operationally CLOSED.
+
+**Cross-references.** shieldscan-engine commit `<7.5e-engine-hash>` (cross-repo pair Commit 2; forthcoming); Task 7.5b ContainerFactory Extension addendum precedent (engine commit `1306ca8`); Task 7.1 D-PLAN-3 framework gap forward-pin origin (engine commit `d4028d0`); Task 7.5e plan (this docs repo commit `829fe4b`); `aquasec/trivy:0.70.0@sha256:be1190af...961a41e` + `instrumentisto/nmap:7.94` (consumer images affected by entrypoint fix); `github.com/docker/docker v28.5.2+incompatible` (`mount.Mount` API source).
+
+**Selected.** Additive framework change preserving backward-compat for Task 7.2 Nmap + Task 7.4 MobSF + Task 7.3 ZAP consumers.
+
 **Open follow-ups.**
 - ~~Task 7.5b: DockerServiceRunner framework expansion (HTTP-API persistent services).~~ **RESOLVED** via shieldscan-engine commit 1306ca8 + ContainerFactory Extension addendum above (Phase 5.B; this commit).
 - Per-tool consumer tasks: M7.1 Trivy, M7.2 Nmap, M7.3 ZAP, M7.4 MobSF, M7.6 SQLMap.
