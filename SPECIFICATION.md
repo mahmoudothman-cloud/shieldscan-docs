@@ -1372,6 +1372,12 @@ Concretely:
 - IMPLEMENTATION-PLAN.md M5 task 5.6 (worker startup) — MUST exclude PG credentials. This ADR is referenced there as the reason.
 - `shieldscan-api` commit `cf3b30a` — `app.services.orchestrator` + `app.services.completions_consumer`.
 
+### ADR-013 Addendum: Payload Contract Auth-Field Extension (ADR-015 Enablement; 2026-05-21)
+
+Extends payload contract per ADR-015 enablement: `auth` field semantics — nullable (no credential provided) → typed when present (`{type: <auth_type>, data: <decrypted-blob>, fields?: <form-fields-map>}`). Orchestrator is sole writer of credential-bearing payloads per ADR-013 canonical authority. Cross-reference ADR-015 §13 for security model + mitigations + threat surface.
+
+**Selected.**
+
 ### ADR-014: Redis Streams (not Pub/Sub) for scan progress events
 **Status:** Accepted (2026-04-30, Task 4.1)
 
@@ -1408,6 +1414,56 @@ Tests in `tests/services/test_scan_queue.py` exercise XADD + XREAD round-trip + 
 - SPECIFICATION §7.2 (channel → stream patch landed in same docs commit).
 - `shieldscan-api` commit `349fc5e` — `app.services.scan_queue`.
 - `tests/services/test_scan_queue.py::test_subscriber_replay_returns_history` — regression guard.
+
+### ADR-014 Addendum: Credential Transit Posture (ADR-015 Enablement; 2026-05-21)
+
+Extends Redis Streams transit medium per ADR-015 enablement: credential-bearing payloads carry decrypted credentials at-rest in Redis for queue-residence duration. Mitigations enumerated in ADR-015 §13 — Redis authenticated access + TLS-in-transit + short queue TTL + no-persistence config (`appendonly no`) for credential-bearing queues. v1.1+ adds per-queue ACL + AOF cipher if persistence enabled.
+
+**Selected.**
+
+### ADR-015: Decrypted Credentials in Redis Transit
+**Status:** Accepted (2026-05-21, ADR-015 enablement task)
+
+**Context:**
+Scan targets often require authentication (cookies, bearer tokens, basic-auth, custom headers, form-based login) to reach injectable surfaces. Credentials are stored encrypted (Fernet) in `ProjectCredential.encrypted_data`. Workers (engine) execute scans against authenticated targets and need decrypted credentials at runtime. The architectural question is: where does decryption happen — orchestrator-side (transit decrypted via Redis) or worker-side (transit encrypted; worker decrypts)?
+
+ADR-015 was reserved at Task 4.2 (`cf3b30a`) pending the orchestrator's `auth` block enablement in job payloads (which carried `null` per `test_dispatch_payload_auth_is_null_pending_adr_015` regression pin). Task 7.6 SQLMap consumer surfaced this empirically at Phase 1 Drift #35 (architectural-reconciliation: integration test could not reach DVWA's auth-gated SQLi endpoint without cookies; wiring-validation reframing landed pending this ADR).
+
+**Decision:**
+Orchestrator decrypts `ProjectCredential` at scan-dispatch time and emits decrypted credentials in the Redis job payload (`JobDispatch.Auth` field). Workers consume pre-decrypted credentials and thread them to `target.AuthConfig` for consumer-side use. Alternative "fetch-by-reference" (worker fetches ciphertext + decrypts) was considered and rejected per (a) inverting current pre-built infrastructure; (b) requiring worker-side Vault integration + DB ACLs; (c) longer attack window (DB + key distribution).
+
+**Architectural pattern:** Decrypted-in-transit with bounded threat surface.
+
+- **Threat surface:** decrypted credentials at-rest in Redis for queue-residence duration (typically seconds-to-minutes per BullMQ semantics).
+- **Mandatory v1 mitigations:** (1) Redis authenticated access; (2) TLS-in-transit between api/engine ↔ Redis; (3) short queue TTL (bounded queue-residence-duration); (4) Redis no-persistence config (`appendonly no`; no AOF write of credential-bearing payloads).
+- **Recommended v1.1+ mitigations:** (5) Redis ACL per-queue (credential-bearing queues read-restricted to worker-pool identity); (6) encryption-at-rest at Redis layer (TLS + AOF cipher if persistence enabled).
+
+**AuthType coverage:** ADR-015 v1 enables all 5 typed values per existing `AuthType` enum (`cookie`, `bearer`, `basic`, `custom_header`, `form`). Orchestrator decrypt+emit code is auth-type-agnostic. Per-consumer handling is per-consumer concern (SQLMap v1 cookie-only; bearer/basic/custom_header/form land per consumer need).
+
+**Discriminator translation:** `ProjectCredential` model keeps `auth_type` DB column (DB schema unchanged). Orchestrator translates DB `auth_type` → wire `type` at payload-emit time. Two-contract separation (DB schema vs engine wire) is canonical separation-of-concerns; translation is orchestrator's sole-writer responsibility per ADR-013.
+
+**Audit logging:** Orchestrator emits audit row at decrypt-time: `{timestamp, project_id, credential_id, scan_id, dispatcher_user_id}` per scan-job dispatch consuming a credential. Audit table (TBD; can land as `credential_access_audit`). v1 includes audit; revocation flow forward-pinned to separate task.
+
+**Out of scope (forward-pinned):**
+- (a) Credential revocation flow — separate task (trigger: *"Begin credential revocation flow task"*)
+- (b) Per-credential rate limits
+- (c) Credential rotation (use existing application-level patterns)
+- (d) R2 pre-signed URL pattern (forward-pinned to MobSF V10 task; orthogonal threat model)
+
+**Cross-references:**
+- ADR-013 (sole-writer + payload contract; addendum extends `auth` field semantics)
+- ADR-014 (Redis Streams transit; addendum captures credential-transit posture mitigations)
+- ADR-024 (RawFinding schema; unaffected)
+- ADR-027 (Metadata; unaffected)
+- Task 4.2 `cf3b30a` (orchestrator deferral; lifted by this ADR)
+- Task 7.3 (ZAP design forward-pin; consumer-side cookie pass-through)
+- Task 7.6 (SQLMap Drift #35 architectural-reconciliation; integration test auto-upgrade target)
+- `shieldscan-engine` `DRIFT-LOG.md` lines 175 + 581-583 (reservation status; updated at Stage 3 Commit 3)
+- `shieldscan-engine` commits `723426d` (Task 7.6 cross-repo pair Commit 2; Drift #35 origin) + `ba860a5` (Task 7.5e Phase 1+2; framework Mounts capability + Entrypoint fix)
+- `shieldscan-docs` commits `15d1ac5` (Task 7.5e ADR-026 Mounts Extension addendum precedent shape) + `c28a5de` (Task 7.6 P5.C latest docs state pre-ADR-015) + `b344d0c` (ADR-015 design doc; §4 verbatim authority for this section) + `00dd2d1` (ADR-015 implementation plan; Stage 3 sub-step canonical)
+- `shieldscan-api` commits `2cd4065` (Task 7.6 SCAN_TYPE_TOOLS; SQLMap routing; `auth:null` currently — lifted at Stage 3 Commit 2) + `e6fb0a5` (Task 7.1; orchestrator scaffold)
+
+**Selected.** Decrypted-in-Redis-transit is the canonical pattern for job-queue + worker architectures; matches existing pre-built infrastructure; bounded threat surface mitigatable via existing Redis security practices.
 
 ### ADR-016: Raw Redis (not Asynq) for Go-side queue protocol
 **Status:** Accepted (2026-05-01, Task 5.1)
