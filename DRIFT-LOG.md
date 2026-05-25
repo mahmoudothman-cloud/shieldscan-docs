@@ -172,7 +172,7 @@ Greppable from app logs for "is SSE being used? are clients reconnecting often? 
 | Per-task test growth | 4.1: 12 · 4.2: 14 · 4.3: 19 · 4.5: 12 · 4.6: 13 · 4.4: 12 = 82 task tests; +8 module-reachability auto-pickups → +90 total |
 | Migrations | 0 (M4 is read-mostly + Redis primitives; no schema changes) |
 | ADRs added | ADR-013 (Python sole writer for scan state) · ADR-014 (Streams over Pub/Sub for progress) |
-| ADRs reserved | ADR-015 (decrypted credentials in Redis) — defer until enabled M5+ |
+| ADRs reserved | ~~ADR-015 (decrypted credentials in Redis) — defer until enabled M5+~~ → **LANDED 2026-05-21** at SPEC §13 per shieldscan-docs commit `9a57865`; cross-repo enablement complete per shieldscan-api `742faed` + shieldscan-engine `b48fef8`. Engine-side `DRIFT-LOG.md` carries full Drifts #40-#44 catalog. |
 | DEVELOPMENT-PATTERNS.md sections added | +2 (M4 delta) — `session_factory` DI for long-lived background tasks (4.2) · API-key audit attribution (4.6, triple-pin promotion). **Total now 3** including section 1 (M3 select_fresh helper). |
 | §6.2 endpoints status | 4 of 9 scans-domain endpoints shipped in M4 (POST create, DELETE cancel, GET progress SSE, POST compare). The other 5 (GET list, GET single, GET jobs, GET jobs/:jid, GET attack-surface) **deferred to M10** read-side cluster per Task 4.1's batched DRIFT-LOG decision. _(Counts reflect Checkpoint 2 §6.2 recount: scans subsection 7→9.)_ |
 | Carry-forwards to M5+ | Worker-side cancel consumption (4.5) · "Ghost queued" retry janitor (4.2 commit-then-dispatch) · ADR-015 (auth-block decryption in Redis transit) · Stream-key cleanup TTL (4.1 ops carry-forward) |
@@ -581,6 +581,8 @@ Five values shipped (`SCAN_DISPATCHED`, `SCAN_CANCELED`, `SCAN_COMPLETED`, `SCAN
 ### 2026-04-30 — Task 4.2: payload.auth = None pending ADR-015
 
 **Pin.** Job payloads dispatched to Redis carry `auth: None`. Decrypted-credential transit through Redis (ADR-015 — deferred) ships when the Go worker side can consume it (M5+). Inline TODO in `_build_job_payload` references ADR-015. Pinned by `test_dispatch_payload_auth_is_null_pending_adr_015` — a future "helpful" enablement without writing the ADR breaks the test.
+
+> **PIN LIFTED — 2026-05-21 ADR-015 LANDED.** Cross-repo trio complete per shieldscan-docs `9a57865` (SPEC §13 ADR-015 + ADR-013/ADR-014 addendums) + shieldscan-api `742faed` (orchestrator decrypt+emit + `SCAN_CREDENTIAL_DECRYPTED` audit + positive-path tests; `test_dispatch_payload_auth_is_null_pending_adr_015` regression pin DELETED per C2.4 option a; replaced with positive-path coverage including credential-less `auth=None` case) + shieldscan-engine `b48fef8` (SQLMap consumer cookie wiring + integration test V4 baseline upgrade; Task 7.6 Drift #35 architectural-reconciliation closed). Engine-side `DRIFT-LOG.md` top entry carries full Drifts #40-#44 catalog (Y-AUDIT favorable infrastructure-discovery + critical architectural-correctness + emission-site refactor + latent pre-existing regression fix + critical integration-test network-topology mismatch).
 
 ### 2026-04-30 — Task 4.2: completions consumer is FastAPI-lifespan-managed (single task per API process)
 
