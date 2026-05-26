@@ -1378,6 +1378,12 @@ Extends payload contract per ADR-015 enablement: `auth` field semantics — null
 
 **Selected.**
 
+### ADR-013 Addendum: Payload Contract Pre-Signed URL Extension (MobSF R2 Pre-Signed URL Task; 2026-05-23)
+
+Extends payload contract per MobSF R2 pre-signed URL task: `JobMobileConfig` gains `signed_fetch_url` field alongside existing `upload_ref`. Both fields populated by orchestrator during migration window per Q1 (β) sibling-field decision. Orchestrator-as-sole-writer-of-time-bounded-access-tokens responsibility per ADR-013 canonical authority preserved (architectural analog to ADR-015 credential decryption: orchestrator generates pre-signed URL via R2 SDK at scan-dispatch time). Engine consumes `signed_fetch_url` via plain HTTP GET when present + non-empty; falls back to `upload_ref` (`r2://<key>`) via worker-side R2 SDK per Q3 (a) backward-compat during migration window. Migration close (forward-pinned to ***"Begin MobSF R2 migration-close task"*** per Q7-refined) removes `upload_ref` emission. Cross-reference R2 design doc shieldscan-docs `b25e9ba` §3 for threat model + mitigations + Q-chain locks.
+
+**Selected.**
+
 ### ADR-014: Redis Streams (not Pub/Sub) for scan progress events
 **Status:** Accepted (2026-04-30, Task 4.1)
 
@@ -1418,6 +1424,12 @@ Tests in `tests/services/test_scan_queue.py` exercise XADD + XREAD round-trip + 
 ### ADR-014 Addendum: Credential Transit Posture (ADR-015 Enablement; 2026-05-21)
 
 Extends Redis Streams transit medium per ADR-015 enablement: credential-bearing payloads carry decrypted credentials at-rest in Redis for queue-residence duration. Mitigations enumerated in ADR-015 §13 — Redis authenticated access + TLS-in-transit + short queue TTL + no-persistence config (`appendonly no`) for credential-bearing queues. v1.1+ adds per-queue ACL + AOF cipher if persistence enabled.
+
+**Selected.**
+
+### ADR-014 Addendum: Pre-Signed URL Transit Posture (MobSF R2 Pre-Signed URL Task; 2026-05-23)
+
+Extends Redis JobDispatch transit medium per MobSF R2 pre-signed URL task: `JobMobileConfig.signed_fetch_url` payloads carry pre-signed R2 GET URLs at-rest in Redis for queue-residence duration (typically seconds-to-minutes per BullMQ semantics; cross-reference ADR-014 transit characterization). Mandatory v1 mitigations: 600s URL expiry per Q2 (a) lock (10x buffer over expected queue-residence; bounded stolen-URL exposure window) + Redis authenticated access per ADR-014 canonical + TLS-in-transit between api/engine ↔ Redis + short queue TTL. Architectural analog to ADR-015 credential transit posture (symmetric orchestrator-as-sole-writer-of-time-bounded-access-tokens forensics; symmetric ephemeral-access-token discipline). v1.1+ enhancements forward-pinned: per-scan-deadline-derived expiry (Q2 (c)) + URL refresh-on-expiry (Q2 (d)) at scale-up motivation. Cross-reference R2 design doc shieldscan-docs `b25e9ba` §3.4 for threat model details.
 
 **Selected.**
 
