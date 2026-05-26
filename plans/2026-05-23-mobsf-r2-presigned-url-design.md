@@ -250,3 +250,48 @@ Per Task 7.6 + ADR-015 + V10 Phase 5 precedent.
 **DRIFT-LOG:**
 
 - shieldscan-engine `DRIFT-LOG.md` (Stage 3 Commit 3 inline entry per Y-DRIFT-LOG-PLACEMENT (a) precedent)
+
+## 9. Phase 5.A Drift Annotations (2026-05-26; ZERO-drift Stage 3 trio achievement)
+
+Following Stage 3 cross-repo implementation (docs `8f71b01` → api `824853c` → engine `3ccf5b8`), drift annotation outcome is **ZERO drifts catalogued for this task**. Cumulative session-tail framing-drift count remains at **49** (unchanged from R2 task entry; R2 added 0 new drifts across the entire 3-commit trio).
+
+**This is the first ZERO-drift Stage 3 trio across the multi-session arc.** Two consecutive ZERO-drift trios (V10 Stage 3 Commit 2 `ad7cc94` + R2 entire Stage 3 trio `8f71b01`+`824853c`+`3ccf5b8`) empirically validate that when prior task pattern is directly applicable (ADR-015 architectural-analog-template here), verify-then-draft + empirical-assertion discipline + Phase 0 v2 grounding (when applicable) + plan §5 LOW drift forecast combine to produce near-zero-drift execution.
+
+### Per-Commit Drift Audit
+
+R2 task validates ZERO-drift execution at the strongest empirical level — every commit gate passed without rework:
+
+- **Pre-verification (V-DA-V-DL)**: surfaced zero drifts (calibration accurate; all V-items predicted correctly)
+- **Stage 3 Commit 1 docs `8f71b01`**: surfaced zero drifts; SPEC ADR-013 + ADR-014 addendums landed exactly per design doc §3.4 verbatim drafts
+- **Stage 3 Commit 2 api `824853c`**: surfaced zero drifts. Notable: Drift #42 emission-site analog applied (R2 URL generation + audit moved INTO `dispatch()` rather than `_build_job_payload`) was recognized as canonical ADR-015 refactor extension rather than surfacing as a fresh drift — pattern continuity preserved.
+- **Stage 3 Commit 3 engine `3ccf5b8`**: surfaced zero drifts. Notable: Y-INTEGRATION-TEST-COVERAGE landed as `(a-revised)` unit-level via `httptest.NewServer` rather than integration_test.go extension; documented as execution-time refinement (V10 iOS integration test still passes unchanged) NOT as drift.
+
+### Pattern Maturity Validation
+
+Cross-task validation across V10 + R2: when architectural analog is concrete + plan-level Y-decisions explicit + pre-verification thorough, drift surface collapses to nil.
+
+ADR-015 enablement architectural analog applied at every R2 layer:
+
+- Orchestrator-as-sole-writer-of-time-bounded-access-tokens (credentials // URLs)
+- Symmetric audit emission (`SCAN_PRESIGNED_URL_GENERATED` ↔ `SCAN_CREDENTIAL_DECRYPTED`)
+- Symmetric ADR-013 + ADR-014 addendum pattern
+- Symmetric cross-repo trio coordination (docs → api → engine)
+- Symmetric scan-level emission per ScanAction policy (Drift #42 emission-site refactor analog)
+
+Each architectural surface mapped 1:1 to ADR-015 enablement structure. The drift-free outcome is the empirical signature of pattern-mature execution.
+
+### Forward-Pin Chain Operational Closure Validation
+
+Task 7.4 Q6.4 (engine env-vars v1; pre-signed URL forward-pin) → ADR-015 Q5 (a) (threat-model coherence deferral) → V10 Q5 (a) (no V10↔R2 coupling re-deferral) → **R2 Stage 3 trio** (3-session forward-pin chain settled with this lifecycle close). 3-session forward-pin chains architecturally resolved via concrete implementation closure.
+
+### Sub-Phase Dispositions
+
+- **P5.A** (this section): COMMIT — design doc ZERO-drift achievement + pattern maturity annotations
+- **P5.B** SPEC ADR addendum: **OUTCOME γ** — ADR-013 + ADR-014 addendums landed at `8f71b01`; ADR-015 + ADR-008 + ADR-017 + ADR-024 + ADR-027 consumed unchanged; no further amendment territory
+- **P5.C** SPEC §3.2 directory annotation: **OUTCOME γ** — NEW `http_fetcher.go` within existing `internal/tools/docker/service/mobsf/` package; no new package directory introduced
+- **P5.D** DRIFT-LOG: engine-side LANDED at `3ccf5b8` inline per Y-DRIFT-LOG-PLACEMENT (a) (canonical R2 entry); docs-side **OUTCOME γ** (no pre-existing R2 reservation entry requiring lifted-status update; engine-side canonical only per V10 P5.D precedent)
+- **P5.E** §14.1 invocation tracking: **OUTCOME γ** — no asymmetric-cost meta-principle invocation (Y1+Y2+Q1-Q8 + Q7-refined + 3 Y-decisions all bounded conventional architectural / execution-time decisions)
+
+### Cumulative Session-Tail Framing-Drift Count
+
+**49 catches at execution time** (unchanged through R2 lifecycle close; R2 added 0 new drifts).
