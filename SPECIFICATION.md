@@ -1477,6 +1477,12 @@ Orchestrator decrypts `ProjectCredential` at scan-dispatch time and emits decryp
 
 **Selected.** Decrypted-in-Redis-transit is the canonical pattern for job-queue + worker architectures; matches existing pre-built infrastructure; bounded threat surface mitigatable via existing Redis security practices.
 
+### ADR-015 Addendum: Credential Lifecycle Extension (Credential Revocation Flow Task; 2026-05-28)
+
+Extends ADR-015 with lifecycle revocation semantics, settling the Q6 (a) revocation forward-pin operationally. Revocation = hard-delete + cascade-cancel per Q2 (γ) (preserves `ProjectCredential` per-project UNIQUE invariant — Drift #41 M1; migration `d4f6b1e9a527` — without partial-index relaxation), Q3 (β) (extend existing DELETE `/orgs/:org_id/projects/:project_id/credentials` endpoint with cascade-cancel; no new verb), and Q4 (a) (orchestrator-side fan-out via `find_in_flight_scans_by_project(project_id)` + loop `CancelPublisher.publish_cancel`; reuses Task 4.5 `cancel_scan` infrastructure 1:1 including PG state flip → `CANCELED` + `SCAN_CANCELED` audit + Pub/Sub signal). Audit emission per Q6 (b): single new `ProjectAction.PROJECT_CREDENTIAL_REVOKED` at revoke-action; cascade-canceled scans emit existing `SCAN_CANCELED` (Task 4.5 reuse). Forensic chain reconstructed via time-window join on (`PROJECT_CREDENTIAL_REVOKED`, `SCAN_CANCELED`) audit rows by project + actor + timestamp. Engine ZERO scope per Q1 (b) axis 4 + Q5 (a) + V-FG empirical infrastructure-already-shipped: `shieldscan-engine` `internal/worker/processor.go:181-322` per-job `jobCtx` + `spawnCancelWatcher` + `ctx.Done` + 3 goleak-clean exit paths per ADR-021 Rule 2 handles credential-revocation-cancel identically to user-initiated cancel; no `cancel_reason` field, no `Scan.cancel_reason` DB column, no engine repo changes. Cross-reference Task 4.5 cancel infrastructure (`shieldscan-api` `routes/scans.py:246-340` `cancel_scan` + `services/scan_queue.py:224` `CancelPublisher`; V-FF canonical authority) + revocation design doc `shieldscan-docs` commit `0e55a4f` + revocation implementation plan commit `fdad021`.
+
+**Selected.**
+
 ### ADR-016: Raw Redis (not Asynq) for Go-side queue protocol
 **Status:** Accepted (2026-05-01, Task 5.1)
 
