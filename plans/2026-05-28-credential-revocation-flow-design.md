@@ -270,3 +270,76 @@ Per Task 7.6 + ADR-015 + R2 Phase 5 precedent. Expected outcome dispositions: P5
 - V-FA-V-FJ surface report (this session; 50+ cumulative drift discipline; ZERO new drifts)
 
 **Cumulative drift count:** 50 catches at execution time (unchanged through revocation pre-verification; clean entry).
+
+## 9. Drift Annotations (Phase 5.A; 2026-06-01)
+
+Phase 5.A annotation per Task 7.6 + ADR-015 + V10 + R2 precedent shape. Drift catalog this task: **3 drifts surfaced at Stage 3 C2 execution** (pre-verification surfaced ZERO; cumulative 50 → 53). All bounded framing-vs-empirical-reality catch-class (same as Drift #44 network-topology + #45 iGoat-Swift + #50 F2 framing-refutation). All non-blocking; resolved cleanly with execution-time pivots.
+
+### Drift #51 — `cancel_scan` route-handler-not-callable
+
+**Framing:** Pre-verification V-FF + V-FP framed *"`cancel_scan` endpoint at `routes/scans.py:246-340`"* as a directly-callable function for cascade-loop reuse per Q4 (a). Plan §3.4 pseudocode said *"invoke existing `cancel_scan(...)` per scan."*
+
+**Empirical reality (Stage 3 C2.3 execution):** `cancel_scan` is a FastAPI route handler with `Request` + `identity` + `redis` FastAPI deps injected at HTTP layer; not directly callable from another endpoint without (a) helper extraction refactor of Task 4.5 or (b) inline-equivalent-logic at call site.
+
+**Resolution:** Inline equivalent logic (PG state flip → `CANCELED` + `SCAN_CANCELED` audit + `CancelPublisher.publish_cancel`) in cascade-cancel loop. Architectural intent preserved (Task 4.5 cancel pattern 1:1 at semantic level — same audit enum, same publisher, same commit-then-publish ordering); call-site pattern adapted from "call route handler" to "inline equivalent statements".
+
+**Forward-pin precedent:** Future cascade-pattern tasks reusing Task 4.5 cancel logic should pre-verify the cancel-target's callability shape (FastAPI route handler vs reusable service function). Inline-equivalent-logic pattern is canonical when the cancel-target is a route handler; helper-extraction refactor of `cancel_scan` is forward-pinned if a 3rd cascade-pattern consumer surfaces (rule-of-three).
+
+### Drift #52 — Y-FILE-LOCATION variant pivot
+
+**Framing:** Design doc §4.2 + plan §3.4 Y-FILE-LOCATION (a) default = `orchestrator.py` per *"parallel-to-dispatch-logic + `find_*`-style helpers convention."*
+
+**Empirical reality (Stage 3 C2.2 execution):** `orchestrator.py` is class-based `ScanOrchestrator` (module-level defs are limited to one `_target_type_for` helper); no module-level `find_*`-style convention exists. Variant (b) `scans.py` doesn't exist at all (the module is named `scan_queue.py`). Variant (c) `scan_queue.py` is publisher/subscriber class territory; project-scoped query helper would be foreign.
+
+**Resolution:** Placed at `src/app/services/projects.py` (project-domain utility module with existing module-level idiom — `extract_root_domain`). First DB-touching async function in that module; reasonable role expansion given project-domain alignment. Q4 (a) orchestrator-side-fan-out architectural intent preserved (location is organization-honest rather than ceremonial-default-adherence).
+
+### Drift #53 — Test file location precision
+
+**Framing:** Plan §4 + session-memory pointed to `tests/routes/test_projects.py`.
+
+**Empirical reality (Stage 3 C2.4 execution):** Test file for credential CRUD is the dedicated singular `tests/routes/test_project_credentials.py` (17 prior tests pin the credential-CRUD contract). `tests/routes/test_projects.py` exists but covers project-CRUD endpoints, not credential endpoints.
+
+**Resolution:** Single grep + redirect; 4 new tests appended to `test_project_credentials.py`. Minor precision miss; non-blocking.
+
+### Dual-analog-strength refinement observation
+
+Pre-verification forecast LOW drift count (~1-3) per design doc §5 + plan §5 invoking ADR-015 audit-emission analog + Task 4.5 cancel-fanout analog as joint template. Actual landed **exactly at upper-band (3 drifts).**
+
+**Honest signal:** Strong-analog tasks aren't automatically zero-drift. Dual-analog template reduces architectural-decision drift surface (Q-chain executed cleanly + ZERO pre-verification drifts) but doesn't eliminate execution-time empirical-contact precision-misses (Drifts #51 + #52 + #53 all surfaced at integration-attempt).
+
+**Comparative:** R2 Stage 3 ZERO-drift trio + V10 Stage 3 ZERO-post-execution were artifacts of unusually-clean architectural-analog applicability + matching code-shape conventions (R2's emission-site analog mapped 1:1 to ADR-015's orchestrator-as-sole-writer dispatch site; V10's iOS section adaptors mapped 1:1 to Android section adaptors). Revocation had analog-strength but more subtle reuse-target precision territory (route-handler-vs-service callability shape; helper-placement convention vs class-based orchestrator) that only surfaces at empirical contact.
+
+**The discipline's value is consistent:** caught at execution + resolved cleanly via Y-decision pivots + inline-equivalent-logic adaptation. ZERO-drift trio is the favorable tail of a distribution, not the expected baseline for analog-grounded tasks.
+
+### LoC forecast-calibration honest acknowledgment
+
+Stage 3 C2 forecast (plan §4): api ~80-130 LoC + tests ~40-60 LoC = ~120-190 LoC total.
+
+Actual: **+385 / -10 LoC** (api: +172; tests: +223). Significant forecast miss, especially on test LoC (+223 vs ~40-60 estimate — **3.7× over**).
+
+**Driver:** Dual-test fixtures (terminal-state + in-flight-state) + revoke-audit + cascade-audit + idempotency + no-cascade tests + verbose docstrings + emission-order comments + helper comments.
+
+**Pattern observation:** Test-LoC estimates consistently undershoot when fixture complexity rises (R2 Stage 3 trio also exceeded test-LoC estimates). Calibration note for future Stage 3 plan landings: **test-LoC forecast should default to 1.5-2× plan estimate when cascade + idempotency + multi-state-fixture tests are anticipated.**
+
+### Sub-phase dispositions
+
+- **P5.A:** COMMIT (this section; 3 drifts + dual-analog refinement + calibration acknowledgment + `cancel_scan` reuse-target forward-pin precedent)
+- **P5.B:** outcome γ (SPEC ADR-015 Credential Lifecycle Extension addendum landed at Stage 3 C1 `291ded3`; no further SPEC amendment territory)
+- **P5.C:** outcome γ (no new package directory; `find_in_flight_scans_by_project` helper added to existing `services/projects.py` module per Drift #52 resolution; no SPEC §3.2 annotation needed)
+- **P5.D:** outcome γ on engine + docs DRIFT-LOG (engine ZERO scope per Q8 a; api commit body documents 3 drifts inline; docs DRIFT-LOG per V10 + R2 precedent default γ — design-doc §9 is canonical task drift catalog)
+- **P5.E:** outcome γ (no asymmetric-cost meta-principle invocation; all revocation decisions bounded conventional — including the 3 drift pivots which were execution-time precision-resolutions, not architectural-cost-asymmetry events)
+
+### Forward-pin chain operational closure
+
+ADR-015 Q6 (a) credential revocation multi-axis forward-pin (3-session deferral ADR-015 v1 → V10 → R2 → revocation Stage 3 trio) **operationally settled** with revocation Stage 3 C2 (`453a80b`) + this Stage 4 P5 commit. The credential-management story closes at canonical-authority + operational-implementation + lifecycle-documentation completeness.
+
+**Post-revocation-lifecycle forward-pins preserved:**
+
+- ***"Begin separate POST `.../credentials/revoke` endpoint task"*** (Q3 α forward-pin if production-safety surfaces semantic-muddling concern with DELETE-extension)
+- ***"Begin org-wide credential revocation task"*** (out-of-v1 scope; preserved if multi-project rotation surfaces)
+- ***"Begin credential re-activation flow task"*** (Q2 γ trade-off; typically YAGNI; preserved)
+- ***"Begin Task 4.5 cancel-helper extraction refactor task"*** (Drift #51 forward-pin if 3rd cascade-pattern consumer surfaces; rule-of-three)
+
+**Cumulative session-tail framing-drift count:** 53 catches at execution time (50 prior + #51 + #52 + #53; all bounded framing-vs-empirical-reality catch-class).
+
+**Cross-references:** shieldscan-docs commits `291ded3` (Stage 3 C1; SPEC §13 ADR-015 Addendum) + `0e55a4f` (revocation Stage 1 design doc; this commit's canonical authority) + `fdad021` (revocation Stage 2 implementation plan); shieldscan-engine commit `99e2c31` (F2 close; ZERO scope per Q8 a); shieldscan-api commit `453a80b` (Stage 3 C2; lifecycle implementation + 3 drifts inline); V10 P5.A precedent `06c444c`; R2 P5.A precedent `88b192c`; ADR-015 P5 precedent `29d1fc3` + `d312d99`.
