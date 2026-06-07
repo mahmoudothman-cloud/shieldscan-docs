@@ -299,3 +299,90 @@ Per Q-COMMITS (a) 3-commit cross-repo + Y3 direct Q-chain (post-Phase-0-v2-groun
 - Phase 0 v2 surface report (P0v2.A-D; this session)
 
 **Cumulative drift count:** 54 catches at execution time (Drift #54 source-ingestion-broken-end-to-end newly catalogued at Y0; ZERO new drifts through SIF_PV + Phase 0 v2 + brainstorming).
+
+## 9. Phase 5 Annotations
+
+### §9.A — Stage 3 Trio Lifecycle Close (2026-06-07)
+
+Stage 3 cross-repo trio operationally closed Drift #54 (FULL_WEB_SOURCE / FULL_SPECTRUM `trivy-fs` dispatch aspirational-broken end-to-end) at all 3 layers:
+
+- **Stage 3 C1 (shieldscan-docs `9d6ab25`):** TOOL-ARCHITECTURE.md §3.2 addendum Source-Acquisition Implementation Lock; canonical authority side; **+16 LoC**.
+- **Stage 3 C2 (shieldscan-api `8dbcbab`):** HTTPS validator on `source_repo_url` (ProjectCreateRequest + ProjectUpdateRequest) + `_SOURCE_REQUIRING_SCAN_TYPES` orchestrator threading + `_SOURCE_REPO_URL_REQUIRED` route-handler 422 gate + 7 tests (4 validator + 1 threading + 2 route); **+285 / -5 LoC**; **564 / 564 full suite green**.
+- **Stage 3 C3 (shieldscan-engine `a0bff50`):** `JobTarget.SourceRepoURL` wire field + `internal/source/` NEW package (`clone.go` + `staging.go`) + `Target.SourceRepoURL` / `Target.ScanID` plumbing + `processor.go` threading + `trivy/source_runner.go` `FsSourceRunner` shim (Drift #57 architectural resolution) + `docker_wiring.go` shim registration + 14 tests + DRIFT-LOG inline; **+734 / -3 LoC**; **25 packages green** (`go vet ./...` clean; `go test -race -count=1 ./...` clean).
+
+### §9.B — Drift Catches at Stage 3 Execution (3 total)
+
+**Drift #55 — Test file path precision** (catalogued at C2 execution): Plan §4 + §4.2 referenced `tests/schemas/test_projects.py`; empirical reality `tests/routes/test_projects.py`. `tests/schemas/` only contains `test_auth_schemas` + `test_raw_findings`. Same catch-class as Drift #53 (revocation Stage 3 C2 test path precision). Resolved via single grep + redirect.
+
+**Drift #56 — File naming precision** (catalogued at C3 execution): Plan §3.5 + §4.3 + §4 referenced `internal/tools/docker/trivy/trivy_fs.go`; empirical reality the trivy package is split into `trivy.go` (`NewContainerRunner` + `NewFsRunner`) + `scan.go` (`buildArgs*`) + `parser.go`. Same catch-class as #53/#55; resolved by creating new file `source_runner.go` in the trivy package for the shim.
+
+**Drift #57 — Framework-extension-point-implied-but-absent** (NEW catch-class; catalogued at C3 execution): Plan §3.5 pseudocode showed `cloneRepo` "in NewBuildScan or equivalent setup site"; empirically `DockerRunner` has NO pre-Run hook — `BuildArgs` is a pure `target → argv` function and `ParseOutput` is `stdout → findings`. Resolved via `FsSourceRunner` shim `ToolRunner` wrapper that holds inner `DockerRunner` + `StagingManager` + performs source-acquisition in its own `Run()` before delegating. Materially distinct from framing-vs-empirical (memory says X / code says Y) AND from stored-design-intent-with-unimplemented-mechanism (#54). **New catch-class entry:** plan-architectural-assumption-vs-framework-extensibility-reality. Resolution preserved `DockerRunner` contract clean (no retroactive widening). Future trigger: rule-of-three at 3rd similar wrapper-pattern surfacing → ***"Begin DockerRunner framework-level pre-Run hook task"*** forward-pin.
+
+**Drift catch summary (Stage 3 lifecycle):** 3 drifts at execution (#55 + #56 + #57); matches plan §5 MODERATE forecast (~2-4 drifts); 2 conventional file-naming-precision class + 1 NEW framework-extension catch-class. Cumulative session-tail framing-drift count: 54 → **57**.
+
+### §9.C — Y-Decision Resolutions at Execution (3 total)
+
+- **Y-WIRE-FIELD-NAME → (a) `JobTarget.SourceRepoURL`:** Plan default landed; DB-column-symmetry preserved; wire JSON `source_repo_url` with `omitempty` preserves backward-compat for non-source-requiring ScanTypes.
+- **Y-PACKAGE-LOCATION → (a) `internal/source/` standalone:** Plan default landed; mirrors `internal/tools/recon/` standalone precedent (engine pre-existing module-level convention); future-multi-tool-consumer (gitleaks / semgrep / dependency_check at M6) preserved as forward-pin reuse target.
+- **Y-CLONE-FAILURE-EVENT-SHAPE → (a) wrapped structured error via existing processor failure-emission path:** Plan default landed; clone failure surfaces as wrapped `fmt.Errorf` with stderr/stdout-tail truncation; existing `emitFailure` → `SCAN_FAILED` event path consumes it unchanged. Q-FAILURE-MODE + Q-EVENTS standard-lifecycle locks preserved (no new event types).
+
+### §9.D — LoC Forecast-vs-Actual Honest Calibration
+
+Stage 3 aggregate forecast: **~193-358 LoC** (design doc §4.4 + plan §4 aggregate).
+
+Actual: **+1035 LoC** (C1 +16 + C2 +285 + C3 +734). Roughly **3× the upper-band forecast.**
+
+**Drivers:**
+- **C3 `FsSourceRunner` shim (+155 LoC):** Drift #57 architectural resolution; not in plan estimate.
+- **Test density:**
+  - C2 tests +195 LoC (vs plan-forecast ~40-60) — 4 + 1 + 2 = 7 tests across 3 test files
+  - C3 tests +279 LoC (vs plan-forecast ~30-50) — 10 + 4 = 14 tests across 3 test files
+- **DRIFT-LOG inline (+62 LoC):** vs plan estimate ~25-40; capturing 3 layers + 3 drifts + 3 Y-resolutions + 9 forward-pins.
+- **Doc-comment density on new exported symbols:** internal/source/ + Target.SourceRepoURL + Target.ScanID + JobTarget.SourceRepoURL each carry ~10-20 lines of architectural-rationale doc-comments (engine convention; matches existing R2 SignedFetchURL precedent shape at runner.go:127-137).
+
+**Pattern:** novel-pattern Stage 3 commits with new package creation + framework-extension drifts trend toward upper +400-800 LoC range per commit, not the ~100-200 plan envelopes. R2 Stage 3 trio (~200-313 LoC) was anomalously clean; revocation Stage 3 trio (~88-145 LoC) was anomalously small.
+
+**Calibration update for future plans:**
+- Novel-pattern Stage 3 aggregate: default forecast ~400-1000 LoC (was ~150-300)
+- Comprehensive-test-coverage at C2+C3: default ~150-280 LoC (was ~50-110)
+- DRIFT-LOG inline LANDED entries: default ~40-65 LoC (was ~25-40)
+- Framework-extension drift premium: +100-200 LoC at C3 when surfaced
+
+### §9.E — Analog-Limitation Observation Outcome
+
+Plan §2.2 forecast: source-acquisition pattern net-new at engine layer; no direct prior analog; closest available — host-clone-then-ReadOnly-mount (Trivy production mount semantics; never previously source-fed); JobTarget wire-field addition (R2 SignedFetchURL precedent); SCAN_FAILED with structured error (Task 4.5 + Task 5.x precedent).
+
+**Empirical outcome: forecast confirmed.** Drift #57 (framework-extension-point-implied-but-absent) is the new catch-class manifestation of the analog-limitation reality — `DockerRunner` framework lacks the pre-Run extensibility that plan §3.5 assumed. Wrapper-pattern resolution preserved `DockerRunner` contract clean while landing source-acquisition cleanly. Plan §2.2's MODERATE drift forecast (~2-4) calibration accurate (3 drifts at execution).
+
+The two file-naming drifts (#55 + #56) are framing-vs-empirical class — a known recurring category (cumulative 8-9 instances across the arc). The framework-extension drift (#57) is the genuinely novel finding from this lifecycle.
+
+### §9.F — Forward-Pin Chain Operational Closure
+
+**Drift #54 root-cause repair (operational closure):**
+
+- **Stored-design-intent canonicalized to implementation-lock:** TOOL-ARCH §3.2 addendum at `9d6ab25`
+- **API layer threading:** `orchestrator.py` + `ScanCreateRequest` validator at `8dbcbab`
+- **Engine layer source-acquisition:** `internal/source/` NEW package + `FsSourceRunner` shim at `a0bff50`
+- **End-to-end pipe operational:** orchestrator threads `source_repo_url` → `JobTarget` wire → engine maps to `tools.Target` → `FsSourceRunner` clones at job-pickup → Docker ReadOnly mount surfaces `/scan/<scan-id>` → trivy fs scans → SCA findings emit
+
+**Forward-pins preserved (9 post-Stage-3):**
+
+1. ***"Begin SCA `ScanType.SCA` enablement task"*** — Task 2 of 2 per SCA decomposition (Option B); mechanical compressed-lifecycle on the now-working source-ingestion path
+2. ***"Begin DockerRunner framework-level pre-Run hook task"*** — Drift #57 rule-of-three trigger if a 3rd wrapper-pattern surfaces (current pattern: 1 instance = `FsSourceRunner`)
+3. ***"Begin Q-AUTH SSH-key git clone task"*** — Q-AUTH forward-pin
+4. ***"Begin Q-AUTH private-token git clone task"*** — Q-AUTH forward-pin
+5. ***"Begin Q-CLONE-LIB go-git library task"*** — Q-CLONE-LIB forward-pin if richer API surfaces
+6. ***"Begin SOURCE_ACQUISITION_* events task"*** — Q-EVENTS forward-pin if operational observability need surfaces
+7. ***"Begin recon-time source-clone task"*** — Q-RECON-TIMING forward-pin; Task 8.1 integration territory
+8. ***"Begin R2-upload-source-tarball variant task"*** — Y1 (β) forward-pin if private-repo / git-protocol-unavailable use case surfaces
+9. ***"Begin LRU staging-cache task"*** — Q-CLEANUP forward-pin if disk-pressure surfaces
+
+### §9.G — Phase 5 Sub-Phase Outcome
+
+**Outcome γ (P5.A only; P5.B-E deferred).**
+
+Rationale: Drift #54 operationally settled at Stage 3 close; no forward-pin chain pivots discovered post-Stage-3; SCA Task 2 of 2 + DockerRunner-framework-extension forward-pins preserved cleanly in DRIFT-LOG `a0bff50`; Stage 3 trio cross-references locked in the commit chain. **P5.B** (forward-pin chain reconciliation) not required — chain captured in §9.F. **P5.C-E** (post-lifecycle artifact updates) not required — no orphaned artifacts. Mirrors R2 + revocation + cancel-helper outcome γ pattern.
+
+**Source-ingestion fix lifecycle Stage 4 OPERATIONALLY CLOSED at this annotation.**
+
+**Next triggers per milestone-completion-constraint (locked this session):** M5 / M6 / M7 / M8 completeness audit (~30-60min) — verify Tasks within M5 (Worker Foundation) + M6 (Native Runners) + M7 (Docker Service Runners) + M8 (Recon-First Pipeline) completeness against repo state; surface any gaps; close milestone OR forward-pin gaps before any new task / milestone entry.
