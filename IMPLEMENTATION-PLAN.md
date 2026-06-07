@@ -2103,17 +2103,29 @@ git commit -m "feat(engine): add recon-first scan executor with target expansion
 
 ---
 
-### Task 8.2: Scan type → tool matrix (Go side)
+### Task 8.2: Scan type → tool matrix (Go side) — **RETIRED (N/A)**
 
-**Files:**
-- Create: `internal/orchestrator/tool_router.go`
-- Test: `internal/orchestrator/tool_router_test.go`
+> **🚫 RETIREMENT NOTICE (2026-06-07; M5/M6/M7/M8 milestone audit):**
+>
+> Task 8.2 is **N/A — retired** per ADR-013 sole-writer pattern (SPEC §13). Empirically `internal/orchestrator/tool_router.go` does NOT exist at engine; arc-evolution determined that an engine-side scan-type-tool matrix would create dual sources of truth for `ScanType → tool` mapping and risk drift between api dispatch decisions and engine routing decisions.
+>
+> **Architectural rationale:** plan-literal called for an engine-side matrix mirroring api-side dispatch. ADR-013 (orchestrator-as-sole-writer; landed before M5 implementation began) supersedes this. The api orchestrator is the canonical authority for `ScanType → tool` dispatch; the engine consumes per-tool `ScanJob` dispatches as they arrive and executes whatever tool the wire payload's `engine` field names.
+>
+> **Canonical location:** `shieldscan-api` `src/app/services/orchestrator.py` — `SCAN_TYPE_TOOLS: Final[dict[ScanType, tuple[str, ...]]]` (per-ScanType tool tuples; module-import assertion ensures every non-`PUBLIC` `ScanType` has a mapping).
+>
+> **Audit reference:** M5/M6/M7/M8 milestone audit (shieldscan-docs `ac82d48` P5.A close + V-K-F surface report this session) classified Task 8.2 as N/A; M5 + M6 + M7 declared CLOSED; M8 remaining gaps are Task 8.1 (scan-executor; arc-evolution-pivot territory; brainstorming forward-pinned to fresh session) + Task 8.3 (attack-surface API endpoint; mechanical gap; compressed-lifecycle eligible).
+>
+> **Cross-references:** SPEC §13 ADR-013 (sole-writer canonical); shieldscan-api `services/orchestrator.py` `SCAN_TYPE_TOOLS` (api-side canonical matrix); shieldscan-api commit `8dbcbab` (source-ingestion fix Stage 3 C2; latest api state extending the matrix surface).
 
-**Step 1: Failing tests** — matrix returns correct tool list per scan type, mobile scan returns only mobsf, full_spectrum returns all.
+**Files (RETIRED; do not implement):**
+- ~~Create: `internal/orchestrator/tool_router.go`~~
+- ~~Test: `internal/orchestrator/tool_router_test.go`~~
 
-**Step 2: Implement** per TOOL-ARCHITECTURE.md §10.1.
+**~~Step 1: Failing tests~~** ~~— matrix returns correct tool list per scan type, mobile scan returns only mobsf, full_spectrum returns all.~~
 
-**Step 3: Commit**
+**~~Step 2: Implement~~** ~~per TOOL-ARCHITECTURE.md §10.1.~~
+
+**~~Step 3: Commit~~**
 
 ---
 
