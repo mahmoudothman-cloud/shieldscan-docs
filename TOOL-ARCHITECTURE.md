@@ -961,6 +961,22 @@ The Attack Surface Map tab in the dashboard shows:
 
 This often reveals **forgotten staging environments, abandoned admin panels, and legacy APIs** that clients didn't know existed — a huge sales differentiator.
 
+### 8.5 AttackSurface Emission Lock (2026-05-30 Addendum)
+
+**Engine emission canonical authority for `EventAttackSurface`.**
+
+Engine recon pipeline (`internal/tools/recon/recon.go` `RunRecon`) publishes the `EventAttackSurface` event to the completions Pub/Sub channel (`shieldscan:completions`) after the httpx phase completes. Rich payload carries per-subdomain rows aggregated from `ReconResult.LiveHosts` (URL + status + status_code + tech_stack + last_probed_at).
+
+**Callsite:** `RunRecon`-internal; emission happens BEFORE the existing `EventReconCompleted` publish (Q-ENGINE-EMIT-CALLSITE a). `EventReconCompleted` is preserved unchanged — it carries SSE-targeted aggregate counts only and does NOT carry rich per-subdomain payload.
+
+**Channel:** `shieldscan:completions` Pub/Sub per ADR-014 mixed-primitive lock. Persistence-targeted events use Pub/Sub (per-scan Streams reserved for SSE consumption per Task 4.4 `ProgressSubscriber`). Per-scan-stream consumer pattern forward-pinned to ADR-018 consumer-groups migration.
+
+**Wire shape:** see SPECIFICATION.md §7 addendum for canonical JSON schema.
+
+**Drift #58 Layer A root-cause repair:** Prior to this addendum, `ReconResult.LiveHosts` rich struct (URL + StatusCode + Tech + Title + Webserver + ContentType) was NEVER published to Redis — it was only returned to the caller, and the only call site existed in test code (M8.1 production-wiring gap). This addendum plus Stage 3 Commit 2 engine implementation repair the engine wire-shape gap. Two-layer manifestation (same catch-class as Drift #54 stored-design-intent-with-unimplemented-mechanism): Layer A engine emission shape is repaired here on the canonical-authority side; Layer B api consumer absence is repaired at Stage 3 Commit 3 (api `completions_consumer.py` extension).
+
+**Cross-references:** Task 8.3α design doc `plans/2026-05-30-attack-surface-consumer-design.md` + implementation plan `plans/2026-05-30-attack-surface-consumer-implementation.md`; SPECIFICATION.md §7 `EventAttackSurface` wire shape addendum; SPECIFICATION.md §13 ADR-013 (sole-writer) + ADR-014 (mixed-primitives) + ADR-017 (sequencing) + ADR-018 (forward-pinned).
+
 ---
 
 ## 9. Mobile Security Flow (MobSF)

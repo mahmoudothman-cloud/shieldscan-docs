@@ -892,6 +892,56 @@ Go worker subscribes to this channel per-scan and calls `ctx.Cancel()` on receip
 
 Every job has an `idempotency_key` format `{scan_id}:{engine}:{unix_timestamp}`. Redis stores this key with 24h TTL. Workers check before processing — duplicates are silently dropped. Safe to retry or replay.
 
+### 7.6 AttackSurface Event (Go → Redis Pub/Sub → Python) (2026-05-30 Addendum)
+
+**`EventAttackSurface` wire shape canonical authority.**
+
+Engine recon pipeline publishes `EventAttackSurface` events to the completions Pub/Sub channel (`shieldscan:completions`) for `AttackSurface` row persistence. Channel routing per ADR-014 mixed-primitives lock (Pub/Sub for persistence-targeted events; per-scan Streams reserved for SSE).
+
+**Wire shape (JSON):**
+
+```json
+{
+  "event_type": "attack_surface",
+  "scan_id": "uuid",
+  "organization_id": "uuid",
+  "root_domain": "example.com",
+  "subdomains": [
+    {
+      "url": "https://api.example.com",
+      "status": "live",
+      "status_code": 200,
+      "tech_stack": ["nginx", "Node.js", "React"],
+      "last_probed_at": "2026-05-30T14:32:00Z"
+    }
+  ],
+  "timestamp": "2026-05-30T14:32:01Z"
+}
+```
+
+**Field semantics:**
+
+- `event_type`: literal `"attack_surface"` (dispatch key at api consumer)
+- `scan_id` + `organization_id`: UUID FK references; `organization_id` used for RLS GUC `SET LOCAL app.current_org_id` pre-write at api consumer
+- `root_domain`: canonical project root domain string
+- `subdomains`: array of per-subdomain rich rows
+- `subdomain.url`: full HTTP(S) URL string; api consumer parses subdomain label via `urlparse(...).hostname`
+- `subdomain.status`: `"live"` / `"dead"` / `"timeout"` string; maps to `SubdomainStatus` enum at api
+- `subdomain.status_code`: HTTP status code int (optional; omitted for dead/timeout)
+- `subdomain.tech_stack`: tech fingerprint string array (optional; empty/null for unfingerprinted)
+- `subdomain.last_probed_at`: RFC3339 UTC timestamp (optional; api fills with event `timestamp` if absent)
+- `timestamp`: emission RFC3339 UTC timestamp
+
+**Channel routing:** `shieldscan:completions` Pub/Sub per ADR-014. Consumer is api `completions_consumer.py` with new `_handle_attack_surface` dispatch. Per-scan Streams are reserved for SSE consumption (Task 4.4 / `ProgressSubscriber`).
+
+**Sole-writer continuity:** api `completions_consumer` remains the sole writer of `AttackSurface` ORM rows per ADR-013; events drive persistence; engine NEVER directly writes `AttackSurface`.
+
+**Multi-process posture:** UPSERT-idempotency-by-construction via `uq_scan_subdomain` UNIQUE constraint + `ON CONFLICT (scan_id, subdomain) DO UPDATE` (Q-MULTI-PROCESS-POSTURE b). ADR-017 sequencing is NOT invoked for `AttackSurface` UPSERT — the unique-constraint + CONFLICT-DO-UPDATE pattern makes duplicate delivery safe without sequence ordering.
+
+**Drift #58 Layer B root-cause repair:** Prior to this addendum, no api service consumed `EventAttackSurface` events nor wrote `AttackSurface` rows — the ORM existed at `src/app/models/recon.py` but no writer existed (orphaned-table catch-class lineage from Drift #54). This wire shape addendum plus Stage 3 Commit 3 api consumer implementation repair the api consumer absence. Two-layer manifestation: Layer A engine emission shape repaired at TOOL-ARCHITECTURE.md §8.5 addendum + engine Stage 3 Commit 2; Layer B api consumer absence repaired here on the canonical-authority side + at Stage 3 Commit 3 (implementation side).
+
+**Cross-references:** TOOL-ARCHITECTURE.md §8.5 addendum (engine emission canonical); Task 8.3α design doc `plans/2026-05-30-attack-surface-consumer-design.md` + implementation plan `plans/2026-05-30-attack-surface-consumer-implementation.md`; §13 ADR-013 (sole-writer) + ADR-014 (mixed-primitives) + ADR-017 (sequencing; not invoked) + ADR-018 (forward-pinned).
+
 ---
 
 ## 8. AI Analysis Pipeline
