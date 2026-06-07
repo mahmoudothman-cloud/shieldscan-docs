@@ -211,6 +211,22 @@ type ScanConfig struct {
 }
 ```
 
+#### §3.2 Addendum: Source-Acquisition Implementation Lock (2026-05-29)
+
+Implements the `SourcePath` design intent canonicalized above (`SourcePath string // for SAST: local git clone path`). Mechanism **(α.1) host-side `os/exec` git clone `--depth=1`** with per-scan tempdir under `$TRIVY_SCAN_BASE_PATH`; engine clones at job-pickup time (lazy per-job at worker); the existing trivy-fs ReadOnly bind mount surfaces the staging tree as `/scan/<scan-id>` inside the container.
+
+**Validator:** `Project.source_repo_url` is HTTPS-scheme-only at v1 (mirrors `target_url` `_validate_https_url`); SSH-key + private-token auth forward-pinned per Q-AUTH.
+
+**Failure semantics:** clone failure is hard-fail with `SCAN_FAILED` structured error (`error.code = "SOURCE_ACQUISITION_FAILED"`; `error.details = {url, git_exit_code, stderr_tail}`) per Q-FAILURE-MODE + Q-EVENTS standard-lifecycle; repairs Drift #54 silent-no-op behavior.
+
+**Cleanup:** per-scan `defer os.RemoveAll(stagingDir)` on the engine host. The container's ReadOnly mount inside trivy-fs does not block host-side cleanup; per Q-CLEANUP.
+
+**Drift #54 root-cause repair:** `FULL_WEB_SOURCE` / `FULL_SPECTRUM` `trivy-fs` dispatch was aspirational-broken end-to-end before this addendum + Stage 3 trio. `Project.source_repo_url` column existed since Milestone 1; orchestrator never threaded it; `JobTarget` wire had no source field; `trivy-fs` silently no-op'd on empty `SourcePath`. Stage 3 trio repairs the wire + orchestrator + engine layers; this addendum lands the canonical authority side. Drift #54 catch-class = stored-design-intent-with-unimplemented-mechanism (distinct from framing-vs-empirical drifts #44/#45/#50/#51-53).
+
+**Scope (v1):** `trivy-fs` SCA scanner only. Future SAST tools (`gitleaks` / `semgrep` / `dependency_check` per IMPLEMENTATION-PLAN.md M6) reuse the same `internal/source/` engine primitive when wired.
+
+**Cross-references:** source-ingestion fix design doc `plans/2026-05-29-source-ingestion-fix-design.md` + implementation plan `plans/2026-05-29-source-ingestion-fix-implementation.md`; Phase 0 v2 empirical anchors (P0v2.A-D ZERO pivot triggers; NodeGoat depth=1 clone 0.76s/3.3M/1.2M `.git`; trivy fs 75 findings against `package-lock.json`; Docker ReadOnly mount enforced — `touch /scan/...` denied); §3.2 design intent (preserved verbatim above).
+
 ### 3.3 Two Concrete Implementations
 
 **NativeRunner** — wraps subprocess execution:
