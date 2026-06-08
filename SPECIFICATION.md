@@ -1900,6 +1900,32 @@ M8 may instead introduce a `ReconCoordinator` type, batch multiple recon invocat
 - **M8 implementation surfaces a need for ToolRunner-shaped recon access** (unlikely; speculative). Revisit if integration tension emerges.
 - **Customer demand for treating subdomain discoveries as findings** (e.g., compliance reporting). At that point, add a synthetic-finding emitter alongside `RunRecon`; don't replace the helper.
 
+#### ADR-022 Addendum: Drift #60 Name-Mismatch Reconciliation (2026-06-08)
+
+**Drift #60 catalogued:** `SCAN_TYPE_TOOLS` at `shieldscan-api/src/app/services/orchestrator.py` lists 6 engine names not registered at the engine `worker.Registry` (stored-design-intent-with-unimplemented-mechanism catch-class; 3rd instance of pattern after Drift #54 source-ingestion + Drift #58 AttackSurface consumer). Surfaced at M81_PV pre-verification (Outcome 3 architectural-decision territory survey) + expanded to 6-engine surface at M81A_PV pre-verification.
+
+**6-engine surface across 3 sub-categories:**
+
+| Sub-category | Engines | Disposition |
+|---|---|---|
+| Name-mismatch | `dependency_check` (api) ↔ `depcheck` (engine) | **RESOLVED at M8.1α** (this addendum + api Commit 2) |
+| Engine-variant naming | `nuclei_fast`, `nuclei_api`, `zap_api` | FORWARD-PINNED to M8.1β |
+| Recon-orphan | `subfinder`, `httpx` | FORWARD-PINNED to M8.1β |
+
+**Name-mismatch resolution:** Y-CANONICAL-NAME-DIRECTION (α) — api adapts to engine canonical name. The engine `worker.Registry` registers the runner as `depcheck` (per `cmd/worker/registry_wiring.go` L107-128 spec table; engine-binary path `dependency-check.sh`). The api `SCAN_TYPE_TOOLS` entries at `FULL_WEB_SOURCE` + `FULL_SPECTRUM` are renamed `dependency_check` → `depcheck` to match. Behavior-preservation invariant: ScanJob row count + dispatch ordering unchanged; engine `registry.Get("depcheck")` now resolves rather than `emitFailure`-ing.
+
+**Pre-existing ADR-022 architecture lock PRESERVED:** Recon (`subfinder`, `httpx`) remains pre-scan-helper at `internal/tools/recon/`; NEVER ToolRunner-registered. Resolution of the recon-orphan sub-category (M8.1β) must align with this lock: target-expansion mechanism invokes `RunRecon` from outside the per-ScanJob dispatch flow (NOT register subfinder/httpx as ToolRunners). The engine-variant sub-category (M8.1β) is architecturally orthogonal to ADR-022 — its resolution is bundled with the M8.1β scan-executor architectural decision (engine=nuclei + `config.fast=true` vs engine=nuclei_fast as separate engine).
+
+**Forward-pin chain (5/6 engines pending M8.1β):**
+
+- Engine-variant resolution decision: tied to scan-executor architecture (M8.1β Stage 1 design doc)
+- Recon-orphan resolution decision: tied to scan-executor architecture (M8.1β Stage 1 design doc) per ADR-022 architecture lock
+- **Discipline-level forward-pin (rule-of-three trigger fired):** "audit-driven model+spec orphan check" becomes a standard pre-verification step for future tasks. Drift #60 establishes pattern durability (3rd instance of stored-design-intent-with-unimplemented-mechanism catch-class); meta-discipline pattern integration into pre-verification template warranted.
+
+**Compressed-lifecycle disposition (Approach B per cancel-helper extraction commit `40ce2f1` precedent):** Bounded refactor + 3-commit cross-repo trio (docs → api → engine) + commit bodies serve as canonical authority artifacts + ZERO design doc + plan ceremony. Aggregate LoC scope ~60-120; matches forecast envelope.
+
+**Cross-references:** M81_PV + M81A_PV pre-verification surface reports (prior sessions); Task 8.3α design doc `0030319` + plan `dba6a7c` §6 (M8.1 forward-pin context); ADR-013 sole-writer canonical + ADR-014 mixed-primitives canonical + ADR-022 (recon-helper canonical preserved); Drift #54 source-ingestion fix (`ac82d48` P5.A close); Drift #58 Task 8.3α AttackSurface consumer (`05023f4` Stage 3 C3 close).
+
 ### ADR-023: Extend NativeRunner with file-output mode for tools that don't write findings to stdout
 
 **Status:** Accepted at M6.7 (2026-05-02).
