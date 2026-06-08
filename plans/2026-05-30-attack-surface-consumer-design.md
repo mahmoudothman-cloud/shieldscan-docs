@@ -279,3 +279,84 @@ Stage 1 design doc (THIS COMMIT) → Stage 2 plan landing → Stage 3 3-commit c
 - Related Drift #54 (source-ingestion fix; orphaned column variant; same catch-class)
 
 **Cumulative drift count:** 58 catches at execution time (Drift #58 catalogued at T83_PV + T83A_PV; clean Stage 1 design doc entry).
+
+---
+
+## 9. Phase 5 Annotations
+
+### §9.A Stage 3 Trio Lifecycle Close (2026-05-30)
+
+Stage 3 cross-repo trio operationally closed Drift #58 (two-layer manifestation: orphaned `AttackSurface` table + orphaned engine wire shape; stored-design-intent-with-unimplemented-mechanism catch-class continuation from Drift #54):
+
+- **Stage 3 C1 (shieldscan-docs `721ba02`):** `TOOL-ARCHITECTURE.md` §8.5 AttackSurface Emission Lock + `SPECIFICATION.md` §7.6 EventAttackSurface Wire Shape dual addendums; canonical authority both layers; **+66 LoC** (TOOL-ARCH +16 + SPEC +50)
+- **Stage 3 C2 (shieldscan-engine `fc75a98`):** `events.go` `EventAttackSurface` + `SubdomainRow` structs + `recon.go` `RunRecon`-internal emission BEFORE `EventReconCompleted` + `CompletionsPublisher.PublishAttackSurface` method + 6 fixture updates + 3 new tests; **+212 / −6 LoC**; 27 packages green; Drift #59 catalogued at execution
+- **Stage 3 C3 (shieldscan-api `05023f4`):** `completions_consumer.py` `_handle()` routing extension + NEW `_handle_attack_surface` handler with atomic-per-event UPSERT + RLS GUC `SET` + 7 scenario tests; **+507 LoC**; 571 full suite passed (564 baseline + 7 new exactly); ZERO regressions
+
+### §9.B Drift catches at Stage 3 execution (1 total)
+
+**Drift #59 — Y-RECON-PUBLISHER-WIRING signature extension precision (catalogued at C2 execution):** Plan `dba6a7c` §3.7 + §4.3 framed "plumb publisher into recon" as singular; empirical reality required +3 params (`completionsPub` + `scanID` + `orgID`) at `RunRecon` signature; design doc `0030319` §3.3 pseudo-code implicitly referenced `scanID`/`orgID`. Soft drift: plan-vs-design-doc internal inconsistency rather than plan-vs-empirical-reality miss. Same catch-class as Drifts #53 / #55 / #56 (parameter / file-naming-precision). Resolved inline at engine C2 by extending `RunRecon` signature; M8.1 forward-pin gap meant no production callers required updating; only 6 test fixtures updated.
+
+**Pattern signal:** this is the 3rd instance of plan-precision-vs-design-doc-precision drift; if a 4th surfaces, a discipline-level **"plan-doc consistency check pre-implementation"** forward-pin is warranted (rule-of-three trigger).
+
+**Drift catch summary (Stage 3 lifecycle):** 1 drift at execution (#59); matches plan §5 LOW forecast (~0-2 drifts). Lower than source-ingestion fix Stage 3 (3 drifts; novel-pattern). Cumulative session-tail framing-drift count: **58 → 59**.
+
+### §9.C Y-decision resolutions at execution (4 total)
+
+- **Y-EVENT-PUBLISH-PATH → (b1) second typed `PublishAttackSurface` method on existing `CompletionsPublisher`.** Plan default landed per V-OF empirical (existing `Publish(ctx, JobCompletedEvent)` hard-typed; b1 viable; `EventAttackSurface` won't need `Validate` since constructed in-code); avoids generalizing publisher dispatch.
+- **Y-RECON-PUBLISHER-WIRING → (a) plumb 3 params through `RunRecon` signature.** Plan default landed per V-OG + V-OH empirical (RunRecon today: ctx + domain + limit + ProgressPublisher + logger; no scanID/orgID/completionsPub); 6 test fixtures updated; no production callsite per M8.1 gap; Drift #59 surfaced (plan said "plumb publisher"; reality required +3 params).
+- **Y-UPSERT-ATOMICITY → (c) atomic-per-event single commit.** Plan default landed; multi-row `pg_insert` + `on_conflict_do_update` with single `session.commit()` per event; `uq_scan_subdomain` semantics inherently idempotent (Q-MULTI-PROCESS-POSTURE b lock holds operationally).
+- **Y-EVENT-PAYLOAD-VALIDATION → (b) permissive parse (PIVOTED from c).** Plan default was (c) hybrid; V-PE empirical drove pivot to (b) — existing `completions_consumer` uses permissive `dict.get` + UUID try/except + no Pydantic schemas; consistency-of-convention preferred over hybrid; no new `schemas/` file added.
+
+### §9.D Strong dual-side analog hypothesis validation
+
+Plan §2.2 hypothesis: Task 8.3α has STRONG dual-side analog (`completions_consumer.py` V-MB + `EventReconCompleted` V-MD patterns) unlike source-ingestion fix (net-new pattern at engine layer); D-deviation forecast LOW (~0-2).
+
+**Empirical outcome: hypothesis CONFIRMED.** Stage 3 trio total drift count = 1 (#59 at engine C2; ZERO at docs C1; ZERO at api C3). Below source-ingestion fix (3 drifts at Stage 3) by analog-mitigation margin.
+
+**Pattern recognition signal:** strong-dual-side-analog tasks have empirically validated LOW drift forecasts at this arc maturity level.
+
+**Discipline implication:** when both engine and api have direct architectural precedent + pre-verification surfaces no novel territory, drift forecast can be confidently LOW; novel-pattern tasks (source-ingestion fix Stage 3 C3 #57 framework-extension catch-class) remain higher-forecast territory.
+
+### §9.E LoC forecast-vs-actual honest calibration
+
+Stage 3 aggregate forecast: ~250-435 LoC (design doc §4.4 + plan §4 aggregate); actual: **+785 LoC** (C1 +66 + C2 +212 + C3 +507). Significant overshoot driven by:
+
+- **C3 test density:** +349 LoC across 7 tests (~50 LoC per test with cross-state assertions); plan-forecast ~80-150
+- **C2 engine code density:** +212 across 4 files including `statusFromStatusCode` helper + 6 fixture updates + 3 new tests; plan-forecast ~60-95
+- **C1 SPEC wire-shape density:** +66 LoC including full JSON wire shape + field semantics; plan-forecast ~30-55
+
+**Calibration update (4th instance of test-LoC undershoot pattern):**
+
+- Pseudo-code-heavy plans default to ~350-450 LoC (already calibrated)
+- Test-LoC for 5-7 scenarios with cross-state assertions: ~200-350 LoC (NOT ~80-150); **~50 LoC per test default**
+- Stage 3 commits with helper-function additions + N-site test fixture updates: forecast ~150-250% of plan estimate
+- SPEC wire-shape addendums: ~50 LoC density when full JSON schema + field semantics present
+
+**Updated forward calibration:** novel-pattern Stage 3 ~400-800 LoC aggregate; strong-dual-side-analog Stage 3 ~500-800 LoC (this task) due to comprehensive-test density; comprehensive-test-coverage default ~250-400 LoC at C3 layer.
+
+### §9.F Forward-pin chain operational closure
+
+**Drift #58 root-cause repair (operational closure):**
+
+- **Two-layer canonical authority canonicalized to implementation-lock:** TOOL-ARCH §8.5 + SPEC §7.6 at `721ba02`
+- **Layer A engine emission:** `events.go` + `recon.go` + `CompletionsPublisher.PublishAttackSurface` at `fc75a98`
+- **Layer B api consumer:** `completions_consumer` routing + `_handle_attack_surface` UPSERT at `05023f4`
+- **End-to-end pipe operational STRUCTURALLY:** engine emits `EventAttackSurface` (when `RunRecon` invoked from production) → completions Pub/Sub → api consumer dispatch → `AttackSurface` ORM UPSERT with RLS
+- **Operational activation gate:** **M8.1 recon-invocation production wiring**; 8.3α infrastructure ready-when-M8.1-lands; `AttackSurface` rows stay empty until M8.1 wires `RunRecon` at production callsite supplying `completionsPub` + `scanID` + `orgID`
+
+**Forward-pins preserved (8 post-Stage-4):**
+
+1. ***"Begin Task 8.3β attack-surface endpoint task"*** — mechanical compressed-lifecycle on populated AttackSurface rows; ready post-Stage-4-close; activation paired with M8.1
+2. ***"Begin M8.1 scan-executor brainstorming"*** — arc-evolution-pivot; recon-invocation production wiring; primary M8 closure blocker
+3. ***"Begin ADR-018 Streams+consumer-groups migration"*** — Y-CONSUMER-LOCATION β trigger
+4. ***"Begin EventReconCompleted enrichment"*** — Y-WIRE-SHAPE b trigger if dual-purpose-payload need surfaces
+5. ***"Begin AttackSurface vulnerability_count join"*** — Task 8.3β endpoint scope
+6. ***"Begin recon-retry/fault-tolerance"*** — operational hardening
+7. ***"Begin per-scan-stream-persistence-consumer migration"*** — Y-CONSUMER-LOCATION β + ADR-018
+8. ***"Begin plan-doc consistency check pre-implementation discipline"*** — Drift #59 rule-of-three trigger if 4th plan-vs-design-doc precision drift surfaces
+
+### §9.G Phase 5 sub-phase outcome
+
+**Outcome γ (P5.A only; P5.B-E deferred).** Rationale: Drift #58 operationally settled at Stage 3 trio close; no forward-pin chain pivots discovered post-Stage-3; Task 8.3β + M8.1 forward-pins preserved cleanly; Stage 3 trio cross-references locked in commit chain (`721ba02` + `fc75a98` + `05023f4`). P5.B (forward-pin chain reconciliation) not required — chain captured in §9.F. P5.C-E (post-lifecycle artifact updates) not required — no orphaned artifacts. Mirrors 5-instance precedent (R2 + revocation + cancel-helper + source-ingestion fix + this) for outcome γ at P5.A close.
+
+Task 8.3α lifecycle Stages 1+2+3+4 **OPERATIONALLY CLOSED**. Next triggers per milestone-completion-constraint: Task 8.3β GET endpoint (mechanical compressed-lifecycle on populated rows) + M8.1 scan-executor brainstorming (arc-evolution-pivot territory) before M8 declarable CLOSED + M9 entry.
