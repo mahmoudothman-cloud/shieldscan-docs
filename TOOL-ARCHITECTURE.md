@@ -874,6 +874,8 @@ User submits: example.com
 
 ### 8.2 Go Implementation
 
+**→ ADR-028 canonical authority (2026-06-09).** This scaffolding pre-dates ADR-013 sole-writer (M4.2 lock) and is INFORMATIONAL, not BINDING. M8.1β.2 architectural decision (SPECIFICATION.md §13 ADR-028) supersedes this speculative pattern; recon-first two-phase dispatch happens at api orchestrator (phase-1 recon ScanJob via `engine="recon"`) + api `completions_consumer` hook → `orchestrator.dispatch_phase2` (phase-2 per-(target, tool) ScanJobs). The `BuildTargetList` engine-side example below is preserved as historical context.
+
 ```go
 // internal/orchestrator/scan_executor.go
 
@@ -1346,6 +1348,8 @@ Some tools only run under specific conditions:
 
 ### 10.3 Tool Execution Concurrency
 
+**→ ADR-028 canonical authority (2026-06-09).** This scaffolding pre-dates ADR-013 sole-writer (M4.2 lock) and is INFORMATIONAL, not BINDING. M8.1β.2 architectural decision (SPECIFICATION.md §13 ADR-028) supersedes the engine-side `ExecuteTools` per-job tool-fanout speculative pattern: concurrency happens at the dispatch-fanout layer at api orchestrator (N×M ScanJobs created at `dispatch_phase2`); per-worker BRPOP-loop semaphore consumes them naturally. ADR-020 (worker concurrency model) reserved-now-closed at ADR-028 per empirical no-promotion-trigger. The `ExecuteTools` engine-side example below is preserved as historical context.
+
 Tools for a scan run **in parallel** up to a per-worker concurrency limit:
 
 ```go
@@ -1593,6 +1597,8 @@ func (t *NucleiTool) Run(ctx context.Context, target Target, cfg ScanConfig) ([]
 ```
 
 ### 12.3 Scan Cancellation
+
+**→ ADR-028 canonical authority (2026-06-09).** This `ScanExecutor.ExecuteScan` scaffolding pre-dates ADR-013 sole-writer (M4.2 lock) and is INFORMATIONAL, not BINDING. M8.1β.2 architectural decision (SPECIFICATION.md §13 ADR-028) supersedes the engine-side per-Scan executor pattern: cancel propagation happens via existing per-scan `shieldscan:cancel:{scan_id}` Pub/Sub channel against per-ScanJob processor `CancelSubscriber` (Task 4.5 infrastructure). Multi-(target, tool) ScanJobs created at `dispatch_phase2` inherit cancel-fanout per existing per-scan cancel channel — no new architectural primitives. The `ExecuteScan` engine-side example below is preserved as historical context.
 
 See Specification §7.4 for the cancellation flow. Key implementation in the tool executor:
 

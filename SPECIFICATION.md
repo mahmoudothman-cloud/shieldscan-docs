@@ -1881,6 +1881,8 @@ Negative:
 
 **Alternatives considered (and rejected).** See Rationale table above.
 
+**→ ADR-028 canonical authority (2026-06-09).** M8.1β.2 architectural decision supersedes this speculative invocation pattern. See ADR-028 for canonical two-phase dispatch architecture (phase-1 recon ScanJob via `engine="recon"` + phase-2 per-(target, tool) ScanJobs via `orchestrator.dispatch_phase2`). The speculative example below is preserved as historical context but is INFORMATIONAL, not BINDING.
+
 **⚠️ SPECULATIVE M8 invocation pattern.** The example below is a **best-effort prediction**, NOT a binding contract. M8 implementation may refine the invocation API based on requirements that emerge during M8 design. The recon-as-helpers principle holds regardless of how the call site evolves.
 
 ```go
@@ -1950,6 +1952,34 @@ M8 may instead introduce a `ReconCoordinator` type, batch multiple recon invocat
 **Drift #60 progress after M8.1β.1:** **4/6 engines resolved** (1 name-mismatch at M8.1α + 3 engine-variants here). Remaining 2/6 (`subfinder` + `httpx` recon-orphans) forward-pinned to **M8.1β.2 scan-executor ADR-style decision document** (Outcome 3 architectural-decision territory per M81_PV).
 
 **Cross-references:** M81B_PV pre-verification surface report (prior session; V-UE grounded engine-variant resolution + Pattern A 2-task decomposition lock); M8.1α lifecycle CLOSED at `fb8cff9` + `2b36d62` + `64b8421`; Pattern A 2-task decomposition (M8.1β → M8.1β.1 + M8.1β.2) locked at M81B_PV; ADR-022 canonical preserved; ADR-026 NativeRunner/DockerRunner consumer assignments preserved.
+
+#### ADR-022 Addendum Continuation: M8.1β.2 Recon-Orphan Resolution + Drift #60 6/6 Closure (2026-06-09)
+
+**Sub-category 3 of Drift #60** (recon-orphan; 2 engines: `subfinder` + `httpx`) **RESOLVED** at M8.1β.2 ADR-028 per Y-RECON-ENGINE-NAME (a) + (a.ii) implicit orchestrator dispatch.
+
+**Resolution lock:** `subfinder` + `httpx` REMOVED from `SCAN_TYPE_TOOLS` entirely (4 web-ScanType entries: QUICK + FULL_WEB + FULL_WEB_SOURCE + FULL_SPECTRUM). Phase-1 recon dispatch is orchestrator-implicit per web-ScanType category (dedicated `engine="recon"` ScanJob; `SCAN_TYPE_TOOLS` stays semantically pure as tools-only list).
+
+**ADR-022 architectural lock preserved:** Recon stays pre-scan-helper at `internal/tools/recon/`. Engine `processor.Process` invokes `RunRecon` directly (NEW dispatch case `engine="recon"` at Stage 3 Commit 2); NOT via registry. ADR-022 explicit rejection of "register subfinder/httpx as ToolRunners" preserved by construction.
+
+**Drift #60 6/6 closure end-to-end:**
+
+- Name-mismatch (1/1): `depcheck` (RESOLVED at M8.1α; commits `fb8cff9` + `2b36d62` + `64b8421`)
+- Engine-variant (3/3): `nuclei_fast` + `nuclei_api` + `zap_api` (RESOLVED at M8.1β.1; commits `bb3e75f` + `d773776` + `9ccde1a`)
+- Recon-orphan (2/2): `subfinder` + `httpx` (RESOLVED at this ADR M8.1β.2 commit 1 docs canonical; engine processor dispatch case at C2; api `SCAN_TYPE_TOOLS` rename at C3)
+
+**Discipline-level forward-pin preserved:** "audit-driven model+spec orphan check should become standard pre-verification step" (rule-of-three trigger fired at #60; 3 instances of stored-design-intent-with-unimplemented-mechanism catch-class — #54 source-ingestion + #58 AttackSurface consumer + #60 SCAN_TYPE_TOOLS orphans).
+
+**Cross-references:** ADR-028 (M8.1β.2 canonical authority for recon-orphan resolution); M81B_PV pre-verification (prior session; engine-variant + recon-orphan sub-category framing); Task 8.3α architecture (foundation for hybrid follow-up dispatch composition).
+
+#### ADR-020 Closure Note (2026-06-09): Promotion-Trigger Empirically Didn't Fire at M8.1β.2
+
+ADR-020 (worker concurrency model) was reserved with explicit promotion-trigger documented at DRIFT-LOG L349: "M5.5 ships per-worker BRPOP-loop concurrency only; M8's recon-first executor ships per-job tool-fanout. Promote to ADR-020 if M8.1 surfaces a load-bearing trade-off."
+
+**Empirical outcome at M8.1β.2.** Promotion-trigger DID NOT fire. Per Q2 Y-DISPATCH-MODEL (a) per-(target, tool) ScanJobs + Q3 Y-CONCURRENCY-MODEL (a) per-worker only: phase-2 dispatch creates N×M ScanJob rows at api orchestrator (concurrency happens at dispatch-fanout layer at api side); existing BRPOP-loop + per-worker semaphore consumes them naturally; no new concurrency primitives introduced at engine side.
+
+**ADR-020 disposition.** Stays DEFERRED indefinitely. Future tasks may revisit if load-bearing concurrency trade-offs surface empirically. M8.1 hypothesized promotion-trigger is closed at this ADR.
+
+**Cross-references.** ADR-028 (M8.1β.2 canonical authority); Q2 + Q3 brainstorming locks at Stage 1 design doc `3f07611` §3.2 + §3.3; M81B_PV V-UI pre-verification (worker concurrency primitives + ADR-020 reserved territory analysis).
 
 ### ADR-023: Extend NativeRunner with file-output mode for tools that don't write findings to stdout
 
@@ -2463,6 +2493,66 @@ Negative:
 - SPECIFICATION.md §7.3: RawFinding schema documentation (Metadata field added per this ADR).
 - shieldscan-docs Phase 5.C (forthcoming this session): DEVELOPMENT-PATTERNS entry for cleanup-uses-parent-context.
 - shieldscan-docs Phase 5.D (forthcoming this session): asymmetric-cost meta-principle promotion evaluation.
+
+### ADR-028: Scan-Executor Recon-First Architecture
+
+**Status:** Accepted (2026-06-09; M8.1β.2 Stage 3 Commit 1 landing).
+
+**Context.** Pre-launch ShieldScan needed scan-executor architecture reconciling:
+
+- (a) Speculative engine-side multi-target scaffolding at TOOL-ARCH §8.2+§10.3+§12.3 + SPEC §1885+ (pre-dates ADR-013 sole-writer; M81B_PV V-UB INFORMATIONAL classification)
+- (b) Per-(scan, tool) ScanJob dispatch at api orchestrator with single `target_url` (M81_PV V-RC empirical state)
+- (c) Drift #60 6-engine surface across 3 sub-categories: name-mismatch resolved at M8.1α (`fb8cff9` + `2b36d62` + `64b8421`); engine-variant resolved at M8.1β.1 (`bb3e75f` + `d773776` + `9ccde1a`); recon-orphan (`subfinder` + `httpx`) remaining
+
+M8.1 milestone audit V-K-F classified as arc-evolution-pivot territory; M81_PV + M81B_PV pre-verification grounded Outcome 3 architectural-decision territory.
+
+**Decision.** Two-phase recon-first dispatch architecture per 10-Q-chain brainstorming locks (Stage 1 design doc `3f07611` §1 + §3):
+
+**Phase-1 — Recon dispatch:** ScanCreate → orchestrator dispatches single RECON ScanJob (`engine="recon"`) for web-ScanTypes (QUICK + FULL_WEB + FULL_WEB_SOURCE + FULL_SPECTRUM). `SCAN_TYPE_TOOLS` stays semantically pure (tools only); recon is orchestrator-implicit dispatch per web-ScanType category. Engine `processor.Process` invokes `RunRecon` directly (NOT via registry per ADR-022; recon stays helper not ToolRunner). `RunRecon` emits `EventAttackSurface` to completions Pub/Sub channel (Task 8.3α infrastructure operational at `fc75a98`).
+
+**Phase-2 — Tool dispatch:** api `completions_consumer._handle_attack_surface` UPSERTs `AttackSurface` rows (Task 8.3α infrastructure at `05023f4`) AND invokes `orchestrator.dispatch_phase2(scan_id)` in NEW session after UPSERT commit (sequential sessions per Q7 c.ii). `orchestrator.dispatch_phase2` queries `AttackSurface` inline + dispatches per-(target, tool) ScanJobs for non-recon tools (per Q2 a per-(target, tool) shape; idempotency-key `{scan_id}:{tool}:{sha256(target_url)[:16]}:{ts}` per Q2 a.ii; empty-AttackSurface = zero phase-2 dispatches per Q2 i recon-first semantics). Phase-2 identity context: audit-log lookup pattern (Q7.4 V-WD refinement; queries most recent SCAN_DISPATCHED `AuditLog` for `scan_id`; reconstructs partial `AuthIdentity` from `actor_id`). Fail-loud-audit on dispatch failure (Q7 c.ii.B; marks scan FAILED with diagnostic-rich audit per Y-PHASE2-DISPATCH-FAILURE-AUDIT-SHAPE b).
+
+**Audit trail.** Two-phase emission (Q5 b). Phase-1 `SCAN_DISPATCHED` preserved unchanged (backward-compat). Phase-2 NEW event type `SCAN_DISPATCHED_PHASE2 = "scan.dispatched_phase2"` (per V-WC convention) with rich `details` JSONB: `{scan_type, priority, phase: "tools", target_count, tool_count, job_count, recon_event_id}`. Always-emit even when `target_count=0` (Q5 b.i; operator visibility into "scan didn't dispatch tools because recon found no targets").
+
+**Concurrency.** Per-worker only (Q3 a); existing BRPOP-loop + per-worker semaphore handles N×M ScanJobs naturally; concurrency at dispatch-fanout layer not in-engine; ADR-020 promotion-trigger empirically didn't fire (see ADR-020 Closure Note in the ADR numbering note region).
+
+**Migration.** NO migration (Q4 a); `ScanJob` schema preserved; idempotency-key extension dispatch-logic-only; no alembic files. Pre-launch context: bounded-staleness disposition (Q10 c); new behavior activates at deploy-time.
+
+**Rationale.** Strategic reuse of Task 8.3α infrastructure (engine `RunRecon` emission + api `completions_consumer` + `AttackSurface` UPSERT) — Q1 hybrid follow-up dispatch composes existing primitives elegantly. ADR-013 sole-writer + ADR-014 mixed-primitives + ADR-022 recon-as-pre-scan-helper all preserved by construction. Multi-target fanout happens at architectural layer designed for it (api orchestrator extension; no new layer needed). Cancel-fanout natural per existing per-scan cancel channel infrastructure.
+
+**Rejected alternatives.**
+
+- (a) api synchronous pre-dispatch — IMPRACTICAL (FastAPI doesn't own recon binaries)
+- (b) engine multi-target per ScanJob — VIABLE but architectural debt (`target_urls` JSONB migration + new wire-shape + per-target completion-event semantics)
+- (d) ReconCoordinator at engine — SPECULATIVE (writer responsibility uncertain; no advantage over c)
+- (β) System identity for phase-2 — loses original-actor attribution at `SCAN_DISPATCHED_PHASE2` audit
+- (γ) Redis-cached identity snapshot — adds stateful Redis primitive outside ADR-014 scope
+- (δ) Reopen Q4 + add `Scan.created_by_user_id` migration — rejected per brainstorming-chain coherence + Q4 lock-preservation
+
+**Consequences.**
+
+- ✅ Strategic reuse of Task 8.3α infrastructure
+- ✅ ADR-013 + ADR-022 preserved by construction
+- ✅ Cancel-fanout natural per existing infrastructure
+- ✅ No migration scope
+- ⚠️ Per-(target, tool) row count amplification for high-target scans (per-target rate-limiting forward-pinned)
+- ⚠️ Implicit ordering dependency at audit-log lookup (synchronous `SCAN_DISPATCHED` emission required pre-phase-2-trigger; documented constraint)
+- ⚠️ Empty-AttackSurface case: scan completes with phase-1-only (correct per recon-first semantics)
+- ⚠️ Phase-2 dispatch failure handling fail-loud-audit (retry-logic forward-pinned post-M8.1β.2)
+
+**Composition with prior architecture.**
+
+- **ADR-013 sole-writer:** api remains canonical writer of `Scan.status` + `ScanJob.status` + `AttackSurface`; engine emits events only
+- **ADR-014 mixed-primitives:** phase-2 dispatch uses completions Pub/Sub channel via Task 8.3α composition
+- **ADR-017 sequencing:** not invoked at this ADR (`AttackSurface` UPSERT idempotency-by-construction per `uq_scan_subdomain`)
+- **ADR-022 recon-as-pre-scan-helper:** preserved (recon stays helper; engine `processor.Process` invokes `RunRecon` directly NOT via registry)
+- **ADR-020 worker-concurrency:** reserved-now-closed at this ADR (promotion-trigger hypothesis empirically didn't fire; see ADR-020 Closure Note)
+
+**Drift #60 6/6 closure.** Recon-orphan sub-category (`subfinder` + `httpx`) RESOLVED STRUCTURALLY at this ADR (engines removed from `SCAN_TYPE_TOOLS` entirely; dedicated `engine="recon"` ScanJob at phase-1 dispatch). Combined with M8.1α (name-mismatch 1/1) + M8.1β.1 (engine-variant 3/3) + this ADR (recon-orphan 2/2) = **6/6 Drift #60 closure end-to-end**. Discipline-level "audit-driven model+spec orphan check" forward-pin preserved (rule-of-three trigger fired at #60).
+
+**Drift #61 V-WD refinement.** Q7.4 brainstorming-chain lock "Identity from `Scan.created_by_user_id`" invalidated by V-WD pre-Stage-1 verification (field absent); refined to Option α audit-log lookup. 4th-instance plan/design-vs-empirical-precision catch-class; discipline-level meta-pattern "DEFERRED-EMPIRICAL marking for concrete-empirical-field Q-decisions" added forward-pin.
+
+**Cross-references.** Stage 1 design doc `plans/2026-06-09-scan-executor-recon-first-design.md` (commit `3f07611`); Stage 2 implementation plan `plans/2026-06-09-scan-executor-recon-first-implementation.md` (commit `fb61129`); M81_PV + M81B_PV + V-W + V-X pre-verification surface reports; Task 8.3α design doc + plan + Stage 3 trio (`0030319` + `dba6a7c` + `721ba02` + `fc75a98` + `05023f4` + `0e5249e`); M8.1α (`fb8cff9` + `2b36d62` + `64b8421`) + M8.1β.1 (`bb3e75f` + `d773776` + `9ccde1a`) lifecycle closures; SPEC §13 ADR-013 + ADR-014 + ADR-017 + ADR-020 (closed at this ADR) + ADR-022 + addendums + this ADR-028.
 
 ---
 
