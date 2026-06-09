@@ -1926,6 +1926,31 @@ M8 may instead introduce a `ReconCoordinator` type, batch multiple recon invocat
 
 **Cross-references:** M81_PV + M81A_PV pre-verification surface reports (prior sessions); Task 8.3α design doc `0030319` + plan `dba6a7c` §6 (M8.1 forward-pin context); ADR-013 sole-writer canonical + ADR-014 mixed-primitives canonical + ADR-022 (recon-helper canonical preserved); Drift #54 source-ingestion fix (`ac82d48` P5.A close); Drift #58 Task 8.3α AttackSurface consumer (`05023f4` Stage 3 C3 close).
 
+#### ADR-022 Addendum Continuation: M8.1β.1 Engine-Variant Resolution (2026-06-09)
+
+**Sub-category 2 of Drift #60** (engine-variant naming; 3 engines: `nuclei_fast` / `nuclei_api` / `zap_api`) **RESOLVED** at this lifecycle per Y-ENGINE-VARIANT-RESOLUTION (a) config-flag (M81B_PV V-UE empirically grounded; prior session).
+
+**Resolution lock:**
+
+| Variant engine name | Resolved to | Variant axis mechanism |
+|---|---|---|
+| `nuclei_fast` (QUICK ScanType) | `engine=nuclei` | `ScanConfig.Depth="quick"` injected at `_build_job_payload` via `_DEPTH_FOR_SCAN_TYPE` map |
+| `nuclei_api` (API ScanType) | `engine=nuclei` | `target.target_type="api"` already auto-set per existing `_target_type_for(ScanType.API) → "api"` |
+| `zap_api` (API ScanType) | `engine=zap` | `target.target_type="api"` already auto-set per same mechanism |
+
+**Rationale per V-UE + V-VC + V-VD empirical analysis:** Pre-existing canonical `ScanConfig` infrastructure (`Depth` knob at `runner.go:206-225` + `TemplateCategories` + per-target `target_type` discriminator via `_target_type_for`) supports all three engine-variants natively. `nuclei_fast`/`nuclei_api`/`zap_api` are artificial engine names for semantic `engine + config` differentiation. Engine `ScanConfig` is the canonical variant-axis mechanism; the api orchestrator threads variant defaults via the `config` block already present in the wire payload.
+
+**Wire-shape preservation:** ZERO wire schema changes. `target.target_type` discriminator already wired (Source-Ingestion Fix orchestrator preserved); `config` block already produces `dict(scan.config or {})` (existing). M8.1β.1 only extends the orchestrator's `config` defaults injection — no `JobDispatch` field additions.
+
+**Architectural continuity:**
+- **ADR-022** (recon-as-pre-scan-helper) preserved — no engine registry changes for variant resolution
+- **ADR-013** (sole-writer) preserved — api remains canonical `SCAN_TYPE_TOOLS` dispatch authority; engine receives `engine + config + target_type` payload
+- **ADR-026** (NativeRunner / DockerRunner consumers) preserved — `nuclei` (NativeRunner) and `zap` (DockerServiceRunner) consumers unchanged at engine
+
+**Drift #60 progress after M8.1β.1:** **4/6 engines resolved** (1 name-mismatch at M8.1α + 3 engine-variants here). Remaining 2/6 (`subfinder` + `httpx` recon-orphans) forward-pinned to **M8.1β.2 scan-executor ADR-style decision document** (Outcome 3 architectural-decision territory per M81_PV).
+
+**Cross-references:** M81B_PV pre-verification surface report (prior session; V-UE grounded engine-variant resolution + Pattern A 2-task decomposition lock); M8.1α lifecycle CLOSED at `fb8cff9` + `2b36d62` + `64b8421`; Pattern A 2-task decomposition (M8.1β → M8.1β.1 + M8.1β.2) locked at M81B_PV; ADR-022 canonical preserved; ADR-026 NativeRunner/DockerRunner consumer assignments preserved.
+
 ### ADR-023: Extend NativeRunner with file-output mode for tools that don't write findings to stdout
 
 **Status:** Accepted at M6.7 (2026-05-02).
