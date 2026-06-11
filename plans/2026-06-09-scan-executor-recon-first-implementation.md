@@ -1,6 +1,6 @@
 # M8.1β.2 — Scan-Executor Recon-First Architecture (ADR-028): Implementation Plan
 
-**Status:** Ready for Stage 3 cross-repo 4-commit implementation. Pre-implementation grounded against M8.1β.2 Stage 1 design doc `3f07611` Q1-Q10 locks + V-W refinements + Task 8.3α infrastructure (`fc75a98` + `05023f4`) + M8.1β.1 lifecycle CLOSED (`bb3e75f` + `d773776` + `9ccde1a`).
+**Status:** M8.1β.2 lifecycle CLOSED (2026-06-10 P5.A landing). Stage 3 4-commit cross-repo trio executed: docs 9507acb + engine 2cf6f5d + api orchestrator 04a9b5c + api completions_consumer dc39fd1. 4 plan-level Y-decisions resolved at execution + 4 micro-refinements absorbed without new catalog. Drift #60 6/6 closure END-TO-END operationally verified. Drift #61 + #62 + #63 catalogued + resolved inline.
 
 **Date:** 2026-06-09.
 

@@ -2060,6 +2060,46 @@ func (wp *WarmPool) Get(ctx context.Context, image string) (string, error) {
 
 ### Task 8.1: Scan executor with recon-first target expansion
 
+> **🔒 M8.1β.2 LIFECYCLE CLOSED — Task 8.1 SUPERSEDED BY ADR-028 (2026-06-10):**
+>
+> The Task 8.1 plan-literal pseudo-code below (`ScanExecutor.ExecuteScan` + `registry.Get` + `reportAttackSurface` patterns) is SUPERSEDED by ADR-028 "Scan-Executor Recon-First Architecture" at SPEC §13. Original pseudo-code is INFORMATIONAL not BINDING; ADR-013 sole-writer + ADR-022 recon-as-pre-scan-helper + ADR-028 two-phase recon-first dispatch are the canonical authority.
+>
+> **M8.1β.2 lifecycle artifacts:**
+> - Stage 1 design doc: plans/2026-06-09-scan-executor-recon-first-design.md (commit 3f07611; 252 LoC; Q1-Q10 architectural decisions + V-W refinements)
+> - Stage 2 implementation plan: plans/2026-06-09-scan-executor-recon-first-implementation.md (commit fb61129; 429 LoC; 4 plan-level Y-decisions + Stage 3 sub-step breakdown)
+> - Stage 3 4-commit cross-repo trio:
+>   - C1 docs 9507acb (+96 LoC): ADR-028 canonical + ADR-022 addendum continuation + ADR-020 closure + TOOL-ARCH speculative resolution
+>   - C2 engine 2cf6f5d (+328/-13 LoC): processor.go recon dispatch + ProcessorDeps concrete-publisher extension + DRIFT-LOG #60 6/6 + #62 resolution
+>   - C3 api orchestrator 04a9b5c (+612/-92 LoC): SCAN_TYPE_TOOLS rename + phase-1 web-ScanType branching + dispatch_phase2 method + SCAN_DISPATCHED_PHASE2 audit + Drift #63 resolution
+>   - C4 api completions_consumer dc39fd1 (+320/-27 LoC): phase-2 dispatch hook + fail-loud-audit + e2e integration tests
+> - Stage 4 P5.A annotations: this commit + engine DRIFT-LOG #63 entry
+>
+> **Aggregate Stage 3:** +1356/-132 LoC (ADR-style architectural-decision implementations at ~1300-1400 LoC density level).
+>
+> **Drift #60 6/6 closure END-TO-END operationally verified at e2e test** (no subfinder/httpx anywhere; recon ScanJob dispatched via orchestrator-implicit logic; per-(target, tool) jobs created via dispatch_phase2).
+>
+> **Drift catalog at M8.1β.2 lifecycle:**
+> - Drift #60 6/6 closure END-TO-END (name-mismatch 1/1 M8.1α + engine-variant 3/3 M8.1β.1 + recon-orphan 2/2 M8.1β.2)
+> - Drift #61 (V-WD Scan.created_by_user_id absence; Q7.4 refined to Option α audit-log lookup)
+> - Drift #62 (V-Z processor→RunRecon interface-vs-concrete type mismatch; resolved at C2 per Sub-Decisions (B) + (B.i))
+> - Drift #63 (V-AAE test-scope-incompleteness; resolved at C3 with expanded scope per Option 1)
+>
+> **4 plan-level Y-decisions resolved at execution:**
+> - Y-AUDIT-LOOKUP-QUERY-SHAPE (a) direct ORM query
+> - Y-AUTHIDENTITY-RECONSTRUCTION-SHAPE refined at execution: audit() takes actor_id/organization_id directly (AuthIdentity reconstruction abandoned)
+> - Y-RECON-SCANJOB-IDEMPOTENCY-KEY (a) {scan_id}:recon:{ts}
+> - Y-PHASE2-DISPATCH-FAILURE-AUDIT-SHAPE (b) diagnostic-rich
+>
+> **4 micro-refinements absorbed without new catalog entries** (scan-bound publisher factory + bootstrap inside NewProcessorFromRedis at C2; _build_job_payload target_url_override + AuthIdentity reconstruction abandoned at C3).
+>
+> **Discipline-level forward-pin chain extended at M8.1β.2 close:**
+> - "Audit-driven model+spec orphan check into pre-verification template" (Drift #60 rule-of-three)
+> - "DEFERRED-EMPIRICAL marking for ALL concrete-empirical-references in plan pseudo-code — field names + type signatures + interface contracts + dependency injection patterns" (Drift #61 + #62 catch-class evolution)
+> - "Examine recon-invocation architectural seam at pre-verification for future engine-side dispatch additions" (Drift #59 + #62 adjacent-layer meta-pattern)
+> - "Pre-verification scope completeness across test-impact-surface — grep ALL test files for behavior-change-impact assertions when ScanType/SCAN_TYPE_TOOLS/audit event/dispatch shape changes" (Drift #63 extension)
+>
+> **M8 closure path:** 8.1α CLOSED + 8.1β.1 CLOSED + 8.1β.2 CLOSED (this lifecycle) + 8.2 retired + 8.3α CLOSED + 8.3β PENDING (trigger: "Begin Task 8.3β attack-surface endpoint task"). After Task 8.3β → M8 declarable CLOSED → M9 entry triggered.
+
 **Files:**
 - Create: `internal/orchestrator/scan_executor.go`
 - Test: `internal/orchestrator/scan_executor_test.go`
@@ -2130,6 +2170,8 @@ git commit -m "feat(engine): add recon-first scan executor with target expansion
 ---
 
 ### Task 8.3: Attack surface API endpoint
+
+> **📌 STATUS (2026-06-10):** 8.3α CLOSED (Task 8.3α infrastructure at fc75a98 + 05023f4); 8.3β PENDING activation (trigger: "Begin Task 8.3β attack-surface endpoint task").
 
 **Files:**
 - Create: `shieldscan-api/src/app/routes/attack_surface.py`
