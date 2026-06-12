@@ -2556,6 +2556,79 @@ M8.1 milestone audit V-K-F classified as arc-evolution-pivot territory; M81_PV +
 
 ---
 
+### ADR-029: AI Analysis Pipeline Foundation (M9.0)
+
+**Status:** Accepted (2026-06-12; M9.0 Stage 3 Commit 0 docs landing). Sub-milestone decomposition declared per Q11 — M9.0 (this foundation) → M9.A (embed/dedup; Tasks 9.1+9.2) → M9.B (correlate/score; Tasks 9.3+9.4) → M9.C (fix-gen/summary; Tasks 9.5+9.6) → M9.D (orchestrator; Task 9.7); strict linear sequencing.
+
+**Context.** M9 AI Analysis Pipeline scope per IMPLEMENTATION-PLAN.md M9 milestone + SPEC §8 canonical authority (§8.1 pipeline stages diagram + §8.2 correlation weights + §8.3 scoring formula + §8.4 mobile fix prompt + §8.5 multi-provider cost targets + §8.6 error-recovery fallback matrix). V-EE pre-verification (M9.0 entry) surfaced 3 empirical gaps: (1) `ai_api_calls` cost-tracking table absent vs CLAUDE.md Gotcha 5 hard mandate; (2) `Scan.executive_summary` column absent vs M9.7 plan-literal pseudo-code; (3) pipeline trigger seam undefined at `completions_consumer._maybe_complete_scan`. M9.0 brainstorming chain (12 Y-decisions + 25+ sub-decisions; Mode 1 sequential conversational) resolved foundational architectural decisions for sub-milestone decomposition.
+
+**Decision.** AI Analysis Pipeline Foundation architecture per 12-Q-chain brainstorming locks (Stage 1 design doc `a46fedd` §1 + §3):
+
+**Phase-1 — Pipeline Execution Model (Q1):** `completions_consumer._maybe_complete_scan` detects all-jobs-terminal → invokes `ScanOrchestrator.dispatch_ai_pipeline` in NEW session (sequential per Q7 c.ii M8.1β.2 precedent) → orchestrator transitions Scan ANALYZING + LPUSH `shieldscan:ai_pipeline` queue with `scan_id` → in-api ai-pipeline-consumer task (BRPOP-loop; mirrors completions_consumer pattern) drains queue → runs M9 pipeline (embed → dedup → correlate → score → fix-gen → summary per SPEC §8.1) → transitions Scan COMPLETED/FAILED. ADR-014 mixed-primitives extension (new Redis queue `shieldscan:ai_pipeline`). Recon-invocation architectural seam forward-pin (Drift #59 + #62 adjacent-layer) extends to ai-pipeline-dispatch seam.
+
+**Phase-2 — Cost Tracking (Q2):** `ai_api_calls` table (TenantMixin RLS isolation) records per-call rows (`scan_id` + `provider` + `model` + `operation_type` + `tokens_in` + `tokens_out` + `cost_usd` + `created_at`). Budget enforcement: hybrid pre-call check for high-cost operations (Claude fix-generation + executive summary); post-call check for low-cost (embeddings + correlation). Per-scan circuit breaker; global circuit breaker forward-pinned for production-readiness. Budget source: hardcoded ScanType constants per SPEC §8.5; database-configurable per-org tiers forward-pinned. **Closes Drift #64 (Drift #60 catch-class 4th-instance: stored-design-intent-with-unimplemented-mechanism per CLAUDE.md Gotcha 5 mandate).**
+
+**Phase-3 — Storage (Q3):** `Scan.executive_summary` Text nullable=True column added at M9.0 migration; full Report architecture (PDF/HTML rendering + R2 + API surface) forward-pinned to M10 lifecycle. **Closes Drift #65 (Drift #61 catch-class 5th-instance: concrete-empirical-field absence sub-category 2nd-instance).**
+
+**Phase-4 — Qdrant Topology (Q4):** Collection-per-organization `findings_{org_id}` with lazy creation at first AI pipeline call. Hard isolation at collection level (ADR-013 sole-writer architectural-layer analog; ShieldScan regulated-industry security positioning). Cross-customer trending opt-in via separate `findings_trending_consented` collection forward-pinned for onboarding maturity.
+
+**Phase-5 — Dedup Persistence (Q5):** Per-scan dedup primary; cross-scan dedup with regression detection + fix-verification forward-pinned to M11+. Points persistent with 90-day TTL retention policy (cleanup-job forward-pinned). Deterministic point identity: `hash(tool + target_url + cwe_id + raw_finding signature)`. `Vulnerability.qdrant_point_id` UUID nullable column added at M9.0 migration; enables correlation explainability + future cross-scan dedup linkage.
+
+**Phase-6 — Vulnerability Promotion Shape (Q6):** One Vulnerability per dedup-cluster (≥0.92 similarity); preserves per-raw-finding traceability via `Vulnerability.raw_finding_ids` UUID[] back-references. raw_finding promotion state: `raw_finding.promoted_at` timestamp + `raw_finding.vulnerability_id` FK. Existing `Vulnerability.fingerprint` column reused per Q6 (C.c) lock (V-FFC empirically verified). Algorithm-level details (cluster representative selection + correlation weighting + promotion threshold logic) deferred to M9.A activation.
+
+**Phase-7 — Provider Client Lifecycle (Q7):** AsyncOpenAI + AsyncAnthropic + AsyncQdrantClient singletons at `src/app/services/ai/clients.py` initialized at FastAPI app lifespan startup. FastAPI Depends pattern for endpoint dependency injection; module-level singleton access for ai-pipeline-consumer background task (mirrors completions_consumer + redis_client precedent). Hard-fail at startup if API keys missing/invalid (configuration errors loud at deploy time).
+
+**Phase-8 — Error Recovery Composition (Q8):** SPEC §8.6 fallback matrix honored: embedding/Qdrant down → rule-based fingerprint fallback; Claude rate-limit → retry 3× with exponential backoff; Claude failure → fallback per matrix. `Scan.ai_pipeline_degraded` boolean column added at M9.0 migration (default False; flipped True on any stage fallback); COMPLETED status preserved when pipeline produces final outputs via fallback. Structured logging at M9 entry; dedicated `fallback_events` table forward-pinned for production-readiness.
+
+**Phase-9 — Migration (Q9):** Single Alembic migration revision file containing all 7 schema changes (`ai_api_calls` table + `Scan.executive_summary` + `Scan.ai_pipeline_degraded` + `Vulnerability.qdrant_point_id` + `Vulnerability.raw_finding_ids` + `raw_finding.promoted_at` + `raw_finding.vulnerability_id`) lands at M9.0 Stage 3 C1. Forward-only at M9 per pre-launch context Q10 M8.1β.2 bounded-staleness precedent; explicit `downgrade()` forward-pinned for production-readiness audit.
+
+**Sub-milestone decomposition (Q11):** M9.0 → M9.A → M9.B → M9.C → M9.D strict linear sequencing. M9.0 closure includes no-op smoke test exercising architectural pipes (real AI provider calls deferred to M9.A activation per Q11 C.c-lite).
+
+**Rationale.** Strategic composition with ADR-028 phase-1+phase-2 architecture (ADR-028 provides AttackSurface + Vulnerability foundation; ADR-029 builds AI pipeline atop). ADR-013 sole-writer + ADR-014 mixed-primitives + ADR-022 recon-as-pre-scan-helper all preserved by construction. completions_consumer + dispatch_phase2 patterns reused at ai-pipeline-consumer + dispatch_ai_pipeline. Pre-launch context dominant: hardcoded budgets, single-collection-per-org, no cross-scan dedup, no global circuit breaker, no fallback_events table — all forward-pinned to production-readiness audit.
+
+**Rejected alternatives.**
+
+- (Q1.a) Inline-consumer execution — couples completions channel to AI latency
+- (Q1.b) Asyncio-background — fails reliability invariant (no persistence + no observability)
+- (Q1.c) Dispatched engine ai-job — language boundary architectural awkwardness (Go engine → Python AI pipeline)
+- (Q1.d) Dedicated Python ai-worker process — operational overhead at pre-launch
+- (Q2.A.b) Hierarchical `ai_api_calls` + `ai_scan_budget` — over-engineered at pre-launch
+- (Q3.B) Separate Report model + R2 object at M9 — absorbs M10 architecture into M9
+- (Q3.D) JSONB `scan_results` column — conflates domains
+- (Q4.B) Single multi-tenant Qdrant collection + payload filter — soft isolation security weakness
+- (Q6.A.a) One-Vulnerability-per-cluster without per-raw-finding traceability — loses verification confidence
+- (Q7.B) Per-call clients — defeats connection pooling
+- (Q8.A.a) Fail-fast per-stage — loses partial pipeline value
+- (Q9.A.b) Sub-milestone-aligned migrations — activation-order dependency complexity
+
+**Consequences.**
+
+- ✅ Strategic reuse of ADR-028 phase-1+phase-2 + completions_consumer + dispatch_phase2 patterns
+- ✅ ADR-013 + ADR-014 + ADR-022 preserved by construction
+- ✅ Drift #64 (ai_api_calls absence; CLAUDE.md Gotcha 5 mandate) closed at this ADR
+- ✅ Drift #65 (Scan.executive_summary absence; M9.7 plan pseudo-code) closed at this ADR
+- ✅ Sub-milestone decomposition declared (M9.0 → M9.A → M9.B → M9.C → M9.D)
+- ⚠️ Hardcoded ScanType budgets — production-readiness audit forward-pin (database-configurable per-org tiers at enterprise pricing)
+- ⚠️ Per-scan circuit breaker only — production-readiness audit forward-pin (global circuit breaker safety net)
+- ⚠️ Collection-per-org operational scale — production-readiness audit forward-pin (revisit at >100 customers)
+- ⚠️ 90-day TTL without enforcement mechanism — production-readiness audit forward-pin (cleanup-job implementation)
+- ⚠️ Implicit ordering dependency at ai-pipeline-consumer lifespan startup ordering (documented constraint)
+- ⚠️ M10 Report architecture deferred — possible `Scan.executive_summary` → `Report.summary_text` migration at M10 if architecturally warranted
+
+**Composition with prior architecture.**
+
+- **ADR-013 sole-writer:** api remains canonical writer of `Scan.status` + `ScanJob.status` + `AttackSurface` + `Vulnerability` + `ai_api_calls`; engine emits events only
+- **ADR-014 mixed-primitives:** `shieldscan:ai_pipeline` Redis queue extension; consistent with `shieldscan:completions` Pub/Sub + per-scan idempotency-key patterns
+- **ADR-017 sequencing:** not invoked at this ADR (AI pipeline operations are idempotent-by-construction per Q5 deterministic fingerprint identity)
+- **ADR-022 recon-as-pre-scan-helper:** not invoked (M9 is post-scan AI analysis territory; recon stays at engine; ADR-022 architectural lock preserved by construction)
+- **ADR-028 scan-executor-recon-first:** COMPOSITION (M9 consumes ADR-028 output — AttackSurface + Vulnerability rows populated by phase-1+phase-2 dispatch — and produces AI-enriched outputs)
+
+**Drift #64 + #65 catalog references.** Stage 1 design doc `plans/2026-06-12-m9-ai-pipeline-foundation-design.md` (commit `a46fedd`) §9 dual catalogue. Persistent engine/api DRIFT-LOG entries forward-pinned to Stage 3 C1 (timing for #64/#65 resolution canonical) OR Stage 4 P5.A per M8.1β.2 V-CC reconciliation precedent.
+
+**Cross-references.** Stage 1 design doc `plans/2026-06-12-m9-ai-pipeline-foundation-design.md` (commit `a46fedd`; 240 LoC §1-§9); Stage 2 implementation plan `plans/2026-06-12-m9-ai-pipeline-foundation-implementation.md` (commit `55dbe32`; 293 LoC §1-§8 + 4 plan-level Y-decisions); V-EE + V-FF + V-GG pre-verification surface reports; CLAUDE.md Gotcha 5 cost-tracking mandate; SPEC §8 canonical M9 authority + SPEC §13 ADR-013 + ADR-014 + ADR-017 + ADR-022 + ADR-028 + this ADR-029.
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.
