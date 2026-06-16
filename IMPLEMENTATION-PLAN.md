@@ -2058,6 +2058,8 @@ func (wp *WarmPool) Get(ctx context.Context, image string) (string, error) {
 
 ## Milestone 8: Recon-First Pipeline (Week 5)
 
+> **🔒 MILESTONE 8 CLOSED (2026-06-16; landed at M9 entry as natural boundary marker):** All M8 sub-tasks resolved — 8.1α CLOSED (Drift #60 1/6) + 8.1β.1 CLOSED (Drift #60 4/6) + 8.1β.2 CLOSED (Drift #60 6/6 END-TO-END + ADR-028 operational) + 8.2 N/A retired + 8.3α CLOSED (AttackSurface consumer infrastructure) + 8.3β CLOSED (attack-surface GET endpoint, api 1b7b314). M8 → M9 transition complete. See the Task 8.1 closure-annotation blockquote below + ADR-028 (SPEC §13) for the recon-first architecture.
+
 ### Task 8.1: Scan executor with recon-first target expansion
 
 > **🔒 M8.1β.2 LIFECYCLE CLOSED — Task 8.1 SUPERSEDED BY ADR-028 (2026-06-10):**
@@ -2189,6 +2191,35 @@ git commit -m "feat(api): add attack surface endpoint"
 ---
 
 ## Milestone 9: AI Analysis Pipeline (Week 5-6)
+
+> **🔒 M9.0 — AI ANALYSIS PIPELINE FOUNDATION (ADR-029) — LIFECYCLE CLOSED (2026-06-16):**
+>
+> M9 is decomposed into sub-milestones per ADR-029 Q11 (strict linear): **M9.0** (this foundation) → **M9.A** (embed/dedup; Tasks 9.1+9.2) → **M9.B** (correlate/score; Tasks 9.3+9.4) → **M9.C** (fix-gen/summary; Tasks 9.5+9.6) → **M9.D** (orchestrator; Task 9.7). The Task 9.1-9.7 plan-literal pseudo-code below is INFORMATIONAL not BINDING; ADR-029 (SPEC §13) is the canonical authority, and the sub-milestones land the real pipeline stages.
+>
+> **M9.0 lifecycle artifacts (8-commit chain):**
+> - Stage 1 design doc: plans/2026-06-12-m9-ai-pipeline-foundation-design.md (commit a46fedd; 240 LoC §1-§9; Q1-Q12 locks)
+> - Stage 2 implementation plan: plans/2026-06-12-m9-ai-pipeline-foundation-implementation.md (commit 55dbe32; 293 LoC; 4 plan-level Y-decisions)
+> - Stage 3 C0 docs ADR-029 at SPEC §13 (commit 45dcabe; +73 LoC; 9 phases + Drift #64/#65 architectural closure)
+> - Stage 3 C1 api schema + modules (commit 51b26ea; +427 LoC; ai_api_calls migration + AIAPICall + Scan/Vulnerability/raw_finding columns + AI clients + cost-tracking + lifespan; Drift #64/#65 code resolution)
+> - Stage 3 C2 api consumer + dispatch hook (commit 1c98330; +398/-40 LoC; AIPipelineConsumer + dispatch_ai_pipeline + completions_consumer interposition + DQ1-DQ5)
+> - Stage 3 C3 api tests + smoke (commit 8410df4; +704 LoC; 25 tests covering clients/cost-tracking/consumer/e2e no-op flow)
+> - Stage 4 P5.A docs annotations (this commit) + persistent DRIFT-LOG sync (api + engine commits)
+>
+> **What M9.0 lands (foundation only; no real AI calls — Q11 C.c-lite no-op smoke):**
+> - ADR-029 two-phase architecture: completions_consumer (all jobs terminal + raw_findings) → orchestrator.dispatch_ai_pipeline (Scan ANALYZING + LPUSH shieldscan:ai_pipeline + SCAN_DISPATCHED_AI_PIPELINE) → AIPipelineConsumer (no-op pipeline) → consumer-driven COMPLETED/PARTIAL + SCAN_COMPLETED (DQ2/DQ5)
+> - ai_api_calls cost-tracking table + per-scan budget + circuit-breaker scaffolding (Q2; closes CLAUDE.md Gotcha 5 gap)
+> - AI provider client singletons (OpenAI + Anthropic + Qdrant) at app lifespan (Q7)
+> - Schema foundation: Scan.executive_summary + Scan.ai_pipeline_degraded + Vulnerability.qdrant_point_id + Vulnerability.raw_finding_ids + raw_findings.promoted_at + raw_findings.vulnerability_id (Q3/Q5/Q6/Q8)
+> - DQ3 empty-findings fast-path (no AI dispatch for findings-free scans); DQ4 ANALYZING idempotency guard
+>
+> **Drift catalog at M9.0 lifecycle:**
+> - Drift #64 (ai_api_calls absence; Drift #60 catch-class 4th-instance) — architectural closure at ADR-029 + code resolution at C1
+> - Drift #65 (Scan.executive_summary absence; Drift #61 catch-class 5th-instance) — architectural closure at ADR-029 + code resolution at C1
+> - Drift #66-averted (V-JJC predicted Path β/γ test-impact at C2; DQ3 design choice averted manifestation — 0 tests broken; no catalogue increment per averted-prediction discipline established at V-IIB/C1)
+>
+> **Cumulative session-tail framing-drift count at M9.0 close: 65** (unchanged through M9.0 lifecycle).
+>
+> **M9.A activation trigger:** ***"Begin M9.A — Embedding + Deduplication"***.
 
 ### Task 9.1: OpenAI embeddings service
 

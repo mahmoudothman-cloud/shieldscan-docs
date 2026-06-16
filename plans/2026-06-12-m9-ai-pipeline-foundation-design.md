@@ -1,6 +1,6 @@
 # M9.0 — AI Analysis Pipeline Foundation (ADR-029): Design
 
-**Status:** Brainstorming chain Q1-Q12 locks complete + V-EE pre-verification + V-FF pre-Stage-1 refinements (this session); ready for Stage 2 implementation plan landing + Stage 3 3-commit api-side (schema+modules → consumer+dispatch → tests+smoke) + Stage 4 P5.A. Sub-milestone decomposition declared per Q11: M9.0 (this foundation) → M9.A (embed/dedup) → M9.B (correlate/score) → M9.C (fix/summary) → M9.D (orchestrator); strict linear sequencing.
+**Status:** M9.0 lifecycle CLOSED (2026-06-16 P5.A landing). 8-commit chain: design a46fedd + plan 55dbe32 + Stage 3 C0 docs ADR-029 45dcabe + C1 api schema/modules 51b26ea + C2 api consumer/dispatch 1c98330 + C3 api tests/smoke 8410df4 + Stage 4 P5.A docs annotations + persistent DRIFT-LOG sync. ADR-029 architecture OPERATIONAL (foundation; no-op pipeline per Q11 C.c-lite — real stages at M9.A+). Drift #64 + #65 closed (architectural at ADR-029 + code at C1); Drift #66-averted (V-JJC predicted, DQ3 design averted). Sub-milestone decomposition per Q11: M9.0 (this foundation, CLOSED) → M9.A (embed/dedup) → M9.B (correlate/score) → M9.C (fix/summary) → M9.D (orchestrator); strict linear sequencing.
 
 **Date:** 2026-06-12.
 

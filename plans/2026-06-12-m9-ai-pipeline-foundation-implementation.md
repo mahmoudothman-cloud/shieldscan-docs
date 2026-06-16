@@ -1,6 +1,6 @@
 # M9.0 — AI Analysis Pipeline Foundation (ADR-029): Implementation Plan
 
-**Status:** Ready for Stage 3 cross-commit api-side implementation (3-commit per Q12: schema+modules → consumer+dispatch → tests+smoke; refined to 4-commit with a C0 docs ADR-029 landing per §2.4). Pre-implementation grounded against M9.0 Stage 1 design doc canonical (commit a46fedd) + Q1-Q12 locks + V-EE + V-FF + V-GG pre-verification surfaces + Drift #64/#65 catalogue. Sub-milestone decomposition declared per Q11 (M9.0 → M9.A → M9.B → M9.C → M9.D strict linear sequencing).
+**Status:** M9.0 lifecycle CLOSED (2026-06-16 P5.A landing). Stage 3 executed as the §2.4-refined 4-commit chain: C0 docs ADR-029 45dcabe + C1 api schema/modules 51b26ea + C2 api consumer/dispatch 1c98330 + C3 api tests/smoke 8410df4; Stage 4 P5.A docs annotations + persistent DRIFT-LOG sync. 4 plan-level Y-decisions resolved at execution (Y-AI-CLIENTS-MODULE-SHAPE a + Y-COST-TRACKING-MODULE-SHAPE a + Y-AI-PIPELINE-CONSUMER-LIFECYCLE a + Y-NO-OP-PIPELINE-SHAPE a). 5 V-JJ DQ resolutions (DQ1-DQ5) at C2. Drift #64 + #65 closed; Drift #66-averted via DQ3 design choice. Sub-milestone decomposition per Q11 (M9.0 CLOSED → M9.A → M9.B → M9.C → M9.D strict linear sequencing).
 
 **Date:** 2026-06-12.
 
