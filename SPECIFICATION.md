@@ -2629,6 +2629,100 @@ M8.1 milestone audit V-K-F classified as arc-evolution-pivot territory; M81_PV +
 
 ---
 
+### ADR-030: AI Pipeline: Embedding + Deduplication (M9.A)
+
+**Status:** Accepted at M9.A Stage 1 design doc landing (`aaf7ea0`; Y-PROMOTION-TIMING Path C gate-decision + Q1-Q12 + 35+ sub-decisions ratified); Stage 2 plan landing (`a8ad52c`; PY1-PY4 plan-level Y-decisions + Stage 3 3-commit breakdown); operational at M9.A Stage 3 C1 + C2 implementation execution.
+
+**Context.** M9.A is the first real-AI sub-milestone of the M9 lifecycle per Q11-M9.0 strict linear sequencing (M9.0 ✅ → M9.A → M9.B → M9.C → M9.D). Composes ADR-029 (AI Analysis Pipeline Foundation; M9.0 architectural authority) by activating the no-op `run_no_op` placeholder into a real-AI pipeline: stage [1] embedding via OpenAI text-embedding-3-small (SPEC §8.1) + stage [2] deduplication via Qdrant cosine similarity ≥0.92 threshold (SPEC §8.1) + Path C cluster→Vulnerability promotion at clustering time. Activates Y2 Task 8.3β attack-surface endpoint `vulnerability_count` forward-pin (Vulnerability rows populate at M9.A; attack-surface join query returns actual counts post-pipeline execution).
+
+**Decision (Y-PROMOTION-TIMING Path C + Q1-Q12 locks).**
+
+**Gate-decision Y-PROMOTION-TIMING (Path C — promote-at-M9.A with incremental fields):** First finding of each dedup cluster creates Vulnerability row with cluster-representative fields (organization_id + project_id [derived from Scan] + scan_id + title + finding_type + severity + engine_category + target_url + cwe_id + fingerprint + raw_finding_ids = [first_id] + qdrant_point_id); subsequent cluster matches append raw_finding_id to existing Vulnerability.raw_finding_ids via `_merge_evidence` helper. Matches M9.0 Q6 (A.c) hybrid clustering + (B.a) raw_finding promotion state lock literally.
+
+**Q1 Y-PIPELINE-WIRING (A' + A'.i):** Replace `run_no_op` with `run(*, db: AsyncSession, scan_id: UUID) -> None` + module-private stage helpers (`_embed_findings` + `_dedup_and_promote` + `_merge_evidence` + `_create_vulnerability_from_finding`); AIPipelineConsumer call-site updates `run_no_op(db, scan_id)` → `run(db, scan_id)`; M9.B/C/D extend `run()` composition + add additional helpers without architectural restructuring.
+
+**Q2 Y-EMBEDDING-INPUT-CONSTRUCTION (A.b + B.c + C.c):** Extended field set (title + finding_type + cwe_id + target_url + description); field-label structure with newline separators; None-marker "N/A". Construction: `f"Title: {title}\nType: {finding_type}\nCWE: {cwe_id or 'N/A'}\nTarget: {target_url}\nDescription: {description or 'N/A'}"`. target_url inclusion prevents endpoint-level vulnerability conflation (XSS at /api/users vs /api/products → distinct Vulnerabilities).
+
+**Q3 Y-EMBEDDING-BATCH-SHAPE (A.a + B.a + C.c + D.b):** batch=100 sequential chunking; hybrid retry (AsyncOpenAI max_retries=3 transient + manual exponential backoff 1s/2s/4s for 429 per SPEC §8.6); rule-based fingerprint fallback at M9.A on 429 exhaustion → Scan.ai_pipeline_degraded=True per Q8-M9.0.
+
+**Q4 Y-EMBEDDING-CACHE-STRATEGY (C'):** No cache at M9.A; cache strategy forward-pinned to production-readiness audit (~$10+/customer/month threshold OR ~5+ seconds embedding latency per scan); embedding cost telemetry at M9.A C2 smoke tests for data-driven revisit (~$0.10/scan threshold).
+
+**Q5 Y-QDRANT-OPERATIONS-API (A.c + B.c + C.a' + D.b):** Explicit `_ensure_collection_exists` helper at `_dedup_and_promote` entry; search vs query_points API choice deferred to V-PP/V-QQ Stage 3 C1 verification; deterministic UUID via `uuid.uuid5(NAMESPACE_FINGERPRINT, fingerprint)` preserves Q5-M9.0 deterministic-identity lock with UUID API compatibility; extended payload (raw_finding_id + scan_id + organization_id + cwe_id + target_url + fingerprint + vulnerability_id). NAMESPACE_FINGERPRINT = `uuid.UUID("00000000-0000-0000-0000-000000000001")`. VectorParams(size=1536, distance=COSINE).
+
+**Q6 Y-DEDUP-ALGORITHM-DETAILS (A.a + B.a + C.a + D.b):** limit=1 + score_threshold=0.92 server-side filter per SPEC §8.1; filter to current scan only (Q5-M9.0 per-scan dedup lock literal); first-emitted cluster representative (M9.B scoring may update Vulnerability.severity per SPEC §8.3); two-phase embed-batch then dedup-sequential; Q5 payload refinement adding vulnerability_id field.
+
+**Q7 Y-MERGE-EVIDENCE-SHAPE (A.a + B.a + C.a + D.b + Resolution γ):** Append-only field update (only Vulnerability.raw_finding_ids updated at M9.A merge; M9.B/C own field refinements); atomic same-flush at end of `_dedup_and_promote` loop; Python read-modify-write via reassignment pattern (`vuln.raw_finding_ids = [*existing, new_id]` forces SQLAlchemy dirty flag); `_merge_evidence(*, db, vulnerability, raw_finding)` module-private receiving Vulnerability instance; Resolution γ pre-generated UUID (`vulnerability_id = uuid.uuid4()`) before instantiation avoids intermediate flush. Idempotency safeguard: `if raw_finding.id in existing_ids: return`.
+
+**Q8 Y-COST-TRACKING-INTEGRATION-POINTS (A.a' + B.a + C.a):** No pre-call check at M9.A embedding stage (honors Q2-M9.0 B.c hybrid lock — embedding classified low-cost = post-call only); per-batch log_ai_call (operation_type="embedding"; tokens_in = batch.usage.prompt_tokens; tokens_out=None; cost_usd via `Decimal(tokens) * Decimal("0.00000002")` per SPEC §8.5); API response usage field authoritative.
+
+**Q9 Y-TEST-FIXTURE-STRATEGY (A.b + B.a + C.a + D.b):** unittest.mock patching client.embeddings.create returning canned 1536-dim vectors + usage stub; in-memory Qdrant via `AsyncQdrantClient(":memory:")` (V-PP/V-QQ Stage 3 C1 verification dependency); function-scoped fixtures; shared parametrized fixtures (two_clustering_findings, two_distinct_findings).
+
+**Q10 Y-MIGRATION-NEEDED:** NO new schema at M9.A. M9.0 C1 schema (`b7e4a1f93c2d`) fully satisfies all M9.A Y-locks per empirical audit. Sub-milestone-specific migrations forward-pinned for M9.B/C/D.
+
+**Q11 Y-ADR-NUMBER:** ADR-030 "AI Pipeline: Embedding + Deduplication (M9.A)" — this ADR. Composes ADR-029 architectural foundation.
+
+**Q12 Y-STAGE3-DECOMPOSITION-FOR-M9.A (A.a + B.a):** 3-commit Stage 3 + top-down docs-first. (1) C0 docs ADR-030 (this) ~80-120 LoC; (2) C1 api pipeline.py rewrite + call-site + M9.0 C3 test conversions ~300-500 LoC; (3) C2 api new tests + M9.A smoke ~300-500 LoC. Aggregate ~680-1120 LoC.
+
+**Plan-level Y-decisions (PY1-PY4; Stage 2 `a8ad52c`).**
+
+**PY1 Y-RAW-FINDINGS-LOAD-QUERY:** Eager load all raw_findings for scan at `run()` entry via `select(RawFinding).where(RawFinding.scan_id == scan_id)`; sequential processing per Q6 (D.b) two-phase pattern.
+
+**PY2 Y-VULNERABILITY-FIELDS-AT-CREATION (per V-NNE pre-grounding):** Path C cluster-representative fields with project_id derivation from Scan.project_id (RawFinding lacks project_id; Scan has it; M9.0 P5.A averted-prediction lineage).
+
+**PY3 Y-PIPELINE-RUN-RETURN-SHAPE:** `run()` returns None per Q1 (A'.i) functional pattern; side-effects only; consumer queries database for state.
+
+**PY4 Y-PIPELINE-ERROR-PROPAGATION:** `run()` raises on unrecoverable errors (Qdrant unavailable + OpenAI 429 retries exhausted + database errors); AIPipelineConsumer M9.0 C2 (`1c98330`) exception handler catches + Scan.ai_pipeline_degraded=True + FAILED transition; Q3 D.b rule-based fingerprint fallback handles 429 within `run()` before propagation.
+
+**Rationale.**
+
+- (a) Path C aligns Q6-M9.0 (A.c) hybrid clustering + (B.a) raw_finding promotion state lock literally; resolves V-MM-surfaced merge_evidence undefined-helper gap; activates Y2 Task 8.3β vulnerability_count forward-pin cleanly at M9.A.
+- (b) Function-style stage helpers (Q1) match arc functional-style precedent (cost_tracking + clients are function-style); class-based orchestration deferred to M9.D (Pipeline class if needed).
+- (c) Extended embedding-input field set (Q2) including target_url prevents endpoint-level vulnerability conflation; field-label structure with newline separators provides explicit semantic boundaries; None-marker "N/A" consistent across nullable fields.
+- (d) Conservative batch size (Q3) honors plan-literal + matches pre-launch scale; hybrid retry strategy uses SDK strengths (transient) + manual control (429 per SPEC §8.6 exponential backoff).
+- (e) No cache at M9.A (Q4) matches pre-launch context discipline (Q2/Q4/Q5/Q8/Q9 forward-pin chain at M9.0); cost telemetry enables data-driven revisit at production-readiness audit.
+- (f) Qdrant deterministic UUID via uuid5 (Q5) preserves M9.0 deterministic-fingerprint lock with API compatibility; extended payload (D.b) enables debugging + cluster-hit lookup without separate JOIN.
+- (g) limit=1 + 0.92 threshold (Q6) matches SPEC §8.1 specification; per-scan filter honors Q5-M9.0 per-scan dedup lock literal; first-emitted cluster representative (C.a) consistent with Path C; M9.B scoring may update severity per SPEC §8.3.
+- (h) Append-only merge_evidence (Q7) preserves M9.B/C field-update authority; atomic same-flush + reassignment pattern + pre-generated UUID Resolution γ avoid SQLAlchemy intermediate-flush complexity.
+- (i) Post-call cost-tracking at M9.A (Q8) honors Q2-M9.0 B.c hybrid lock for low-cost operations; pre-call discipline reserved for M9.C high-cost operations.
+- (j) In-memory Qdrant test fixture (Q9 B.a) preserves real similarity behavior; novel testing territory at first-real-AI sub-milestone establishes precedent for M9.B/C/D test coverage.
+- (k) No new schema (Q10) demonstrates M9.0 C1 architectural foundation completeness; sub-milestone-specific migrations preserved for M9.B/C/D if needed.
+- (l) 3-commit Stage 3 + top-down docs-first (Q12) mirrors M9.0 Stage 3 4-commit pattern adjusted for no-schema-migration scope.
+
+**Rejected alternatives.**
+
+- (1) Y-PROMOTION-TIMING Path A — full Vulnerability creation at clustering; semantically heavier; rejected for Path C hybrid alignment with Q6-M9.0 (A.c) lock.
+- (2) Y-PROMOTION-TIMING Path B — defer promotion to M9.C/D; Y2 activation delayed; M9.A scope becomes Qdrant-only; rejected for Y2 forward-pin alignment.
+- (3) Q1 Pipeline class with stage methods — deviates from arc functional-style precedent (cost_tracking + clients); rejected for functional consistency.
+- (4) Q2 Plan-literal field set (excludes target_url) — risks endpoint-level vulnerability conflation; rejected for architectural correctness.
+- (5) Q3 Larger batch size (500-1000) — marginal benefit at ShieldScan finding counts; rejected for conservative pre-launch alignment.
+- (6) Q3 Async concurrent batching — rate-limit risk; rejected for sequential simplicity.
+- (7) Q4 Qdrant existence check / separate Redis cache / Plan-literal cache mechanism — premature optimization at pre-launch scale; rejected for production-readiness forward-pin.
+- (8) Q5 raw_finding.id as point ID — violates Q5-M9.0 deterministic-fingerprint lock; rejected for fingerprint-based identity preservation.
+- (9) Q6 Whole-collection org-scope query — de-facto cross-scan dedup; deviates from Q5-M9.0 per-scan-primary lock; rejected for Q5-M9.0 literal adherence.
+- (10) Q7 PostgreSQL array_append SQL / SQLAlchemy MutableList tracking — adds complexity for marginal benefit; rejected for reassignment pattern simplicity.
+- (11) Q8 Pre-call check at embedding stage — violates Q2-M9.0 B.c low-cost classification; rejected for Q2-M9.0 lock alignment.
+- (12) Q9 respx HTTPX-level mock / Docker testcontainers / custom in-memory fake — dependency burden OR fidelity loss; rejected for unittest.mock + qdrant-client :memory: simplicity.
+
+**Consequences.**
+
+- Activates Y2 Task 8.3β attack-surface endpoint vulnerability_count forward-pin cleanly at M9.A (Vulnerability rows populate at clustering time; join query returns actual counts post-pipeline execution).
+- Enables real-AI pipeline execution against M9.0 architectural foundation (AIPipelineConsumer + ai_api_calls cost-tracking + clients singletons all operational); foundation operational state empirically re-verified at V-MM pre-verification.
+- Establishes test fixture precedent for M9.B/C/D (unittest.mock + in-memory Qdrant) at first-real-AI sub-milestone; pattern propagates to subsequent sub-milestones.
+- Pre-launch context discipline preserved: no cache + no tiktoken + no pre-call embedding budget check + sub-milestone-specific schema migrations; production-readiness forward-pin chain documents path-to-scale-readiness.
+- Recon-invocation-seam-extension discipline operational: pipeline-rewrite seam at M9.A C1; M9.0 C3 test-conversion territory anticipated (Drift #63 catch-class extension; V-PP/V-QQ Stage 3 C1 pre-verification covers).
+
+**Composition with prior architecture.**
+
+- **ADR-013 (RLS sole-writer):** `_create_vulnerability_from_finding` + `_merge_evidence` + raw_finding state-transition all respect tenant boundaries via established RLS GUC pattern; AIPipelineConsumer sets GUC before `pipeline.run()` invocation per M9.0 C2.
+- **ADR-014 (mixed-primitives):** Vulnerability + raw_finding + ai_api_calls + Qdrant collections all per-org-isolated via established tenant pattern; collection-per-organization `findings_{org_id}` (Q4-M9.0) extends primitive.
+- **ADR-022 (cost-tracking authority):** ai_api_calls operations (log_ai_call) at per-batch granularity per Q8 lock; check_budget reserved for M9.C high-cost operations per Q2-M9.0 B.c.
+- **ADR-028 (scan-executor recon-first):** Pipeline runs after Phase-2 (completions) phase per M9.0 C2 dispatch architecture (completions_consumer DQ1 raw_findings-gated dispatch → orchestrator.dispatch_ai_pipeline → AIPipelineConsumer BRPOP → run()).
+- **ADR-029 (AI Analysis Pipeline Foundation):** Phase-1 execution model (in-api ai-pipeline-consumer) + Phase-2 cost-tracking schema (ai_api_calls) + Phase-5 dedup persistence (Qdrant collection-per-org + Vulnerability.qdrant_point_id) + Phase-6 vulnerability promotion shape (Vulnerability.raw_finding_ids + raw_finding.promoted_at + vulnerability_id) all consumed at M9.A real-implementation activation.
+
+**Cross-references.** Stage 1 design doc `plans/2026-06-16-m9a-embedding-dedup-design.md` (commit `aaf7ea0`; canonical reference for Y-locks + Path C resolution + V-MM/V-NNE pre-grounding); Stage 2 implementation plan `plans/2026-06-17-m9a-embedding-dedup-implementation.md` (commit `a8ad52c`; canonical reference for PY1-PY4 plan-level Y-decisions + Stage 3 sub-step breakdown + D-deviation forecasts); M9.0 lifecycle (commits `a46fedd` + `55dbe32` + `45dcabe` + `51b26ea` + `1c98330` + `8410df4` + `62499a3` + `4616672` + `6254849`; architectural foundation composed); SPEC §8.1 pipeline stages canonical authority (embedding + dedup at M9.A; correlate + score at M9.B; fix + summary at M9.C; orchestrate at M9.D); SPEC §8.5 cost targets ($0.02/1M tokens for text-embedding-3-small); SPEC §8.6 error-recovery fallback matrix (rule-based fingerprint fallback per Q3 D.b); CLAUDE.md Gotcha 5 cost-tracking mandate (activates at M9.A first real-cost logging).
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.
