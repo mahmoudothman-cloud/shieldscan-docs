@@ -2221,7 +2221,37 @@ git commit -m "feat(api): add attack surface endpoint"
 >
 > **M9.A activation trigger:** ***"Begin M9.A — Embedding + Deduplication"***.
 
+> **🔒 M9.A — AI PIPELINE: EMBEDDING + DEDUPLICATION (ADR-030) — LIFECYCLE CLOSED (2026-06-23):**
+>
+> First real-AI sub-milestone (Tasks 9.1+9.2). Composes ADR-029 by activating the M9.0 no-op `run_no_op` scaffold into the real embed → dedup → Path C promotion pipeline. ADR-030 (SPEC §13) is the canonical authority.
+>
+> **M9.A lifecycle artifacts (8-commit chain):**
+> - Stage 1 design doc: plans/2026-06-16-m9a-embedding-dedup-design.md (commit aaf7ea0; §1-§9; Y-PROMOTION-TIMING Path C + Q1-Q12 + 35+ sub-decisions + §9 V-MM/V-NNE pre-grounding)
+> - Stage 2 implementation plan: plans/2026-06-17-m9a-embedding-dedup-implementation.md (commit a8ad52c; PY1-PY4 plan-level Y-decisions + Stage 3 3-commit sub-step breakdown)
+> - Stage 3 C0 docs ADR-030 at SPEC §13 (commit d408b2c; +94 LoC; between ADR-029 + §14)
+> - Stage 3 C1 api implementation (commit 91ec273; +401/-23 LoC; pipeline.py rewrite — run() + 4 stage helpers; Q5 B.c→query_points + Q9 B.a→AsyncQdrantClient(":memory:") deferred-resolutions locked at execution; Drift #66 catalogued + resolved)
+> - Stage 3 C2 api tests + smoke (commit 251960a; +1097 LoC; 35 new tests + full suite 657 ZERO regressions; Drift #66 regression-guard operational; Y2 activation verified)
+> - Stage 4 P5.A docs annotations (this commit) + persistent DRIFT-LOG sync (api + engine commits forthcoming)
+>
+> **What M9.A lands (first real AI calls; SPEC §8.1 stages [1]+[2]):**
+> - Embedding via OpenAI text-embedding-3-small (1536-dim) — batch=100, hybrid 429 retry, rule-based fingerprint fallback → ai_pipeline_degraded (Q2/Q3 + SPEC §8.6)
+> - Dedup via Qdrant cosine ≥0.92, per-scan filter, deterministic uuid5 point ids (Q5/Q6)
+> - Path C: first finding of each cluster → Vulnerability (project_id derived from Scan per PY2/V-NNE); subsequent matches append raw_finding_id via _merge_evidence (Q7)
+> - Per-batch ai_api_calls cost logging (Q8; activates CLAUDE.md Gotcha 5 first real-cost path)
+>
+> **Y2 Task 8.3β vulnerability_count forward-pin ACTIVATED:** the attack-surface endpoint join (Vulnerability.target_url == AttackSurface.full_url filtered by scan_id) returns actual counts post-pipeline; pre-M9.A returned 0. Verified at test_m9a_smoke_y2_vulnerability_count_activation (251960a).
+>
+> **Drift catalog at M9.A lifecycle:**
+> - Drift #66 (Resolution γ FK-ordering — NOVEL "ORM-vs-DB layer assumption mismatch" catch-class; first instance in arc) — surfaced at C1 test execution (raw_findings.vulnerability_id FK requires Vulnerability persistence before the raw_finding UPDATE; SQLAlchemy UOW can't infer order without a relationship()); resolved via intermediate flush in _create_vulnerability_from_finding; regression-guarded at C2. Persistent api + engine DRIFT-LOG sync at P5.A Commits 2+3.
+> - Disambiguation: distinct from the prior "#66-averted lineage" documentation shorthand (V-JJC/DQ3 at M9.0 C2; V-MM/V-NNE at M9.A Stage 1) — that used #66 as a would-be-next-number placeholder and never incremented (count stayed 65). Drift #66 is the first real increment (65→66).
+>
+> **Cumulative session-tail framing-drift count at M9.A close: 66** (Drift #58-#66; +1 since M9.0 close for the FK-ordering catch).
+>
+> **M9.B activation trigger:** ***"Begin M9.B — Correlation + Scoring"*** (Tasks 9.3+9.4; per Q11-M9.0 strict linear sequencing).
+
 ### Task 9.1: OpenAI embeddings service
+
+> **🔒 CLOSED at M9.A Stage 3 C1 (api 91ec273) + tests C2 (251960a); ADR-030 Path C operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-030). Real implementation: `_embed_findings` + `_construct_embedding_input` + `_embed_batch_with_retry_and_usage` in `src/app/services/ai/pipeline.py` (batch=100, labeled multi-field input incl. target_url, hybrid 429 retry + rule-based fingerprint fallback, per-batch ai_api_calls cost logging). Tests: `tests/services/ai/test_embed_findings.py`.
 
 **Files:**
 - Create: `shieldscan-api/src/app/services/ai/embeddings.py`
@@ -2252,6 +2282,8 @@ async def embed_findings(findings: list[RawFinding]) -> list[list[float]]:
 ---
 
 ### Task 9.2: Qdrant deduplication
+
+> **🔒 CLOSED at M9.A Stage 3 C1 (api 91ec273) + tests C2 (251960a); ADR-030 Path C operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-030). Real implementation: `_dedup_and_promote` + `_ensure_collection_exists` + `_search_similar` (cosine ≥0.92, per-scan filter, `query_points` per Q5 B.c V-QQC) + `_upsert_finding` + `_create_vulnerability_from_finding` + `_merge_evidence` in `src/app/services/ai/pipeline.py`. Path C: first cluster finding → Vulnerability (project_id from Scan per PY2/V-NNE); matches append raw_finding_id. Tests: `tests/services/ai/test_dedup_and_promote.py`.
 
 **Files:**
 - Create: `src/app/services/ai/deduplication.py`

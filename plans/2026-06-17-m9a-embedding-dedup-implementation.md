@@ -1,6 +1,6 @@
 # M9.A — AI Pipeline: Embedding + Deduplication (ADR-030): Implementation Plan
 
-**Status:** Stage 1 design doc landed (aaf7ea0; ADR-030; Y-PROMOTION-TIMING Path C + Q1-Q12 + 35+ sub-decisions); plan-level Y-decisions ratified at this commit; ready for Stage 3 3-commit execution (C0 docs ADR-030 → C1 api pipeline.py rewrite + call-site + M9.0 test conversions → C2 api new tests + smoke) + Stage 4 P5.A.
+**Status:** CLOSED at M9.A Stage 3 + P5.A lifecycle closure (2026-06-23). PY1-PY4 plan-level Y-decisions operational at api C1 (91ec273); Stage 3 3-commit chain landed (C0 docs ADR-030 d408b2c → C1 api pipeline.py rewrite 91ec273 → C2 api tests + smoke 251960a; 35 tests, suite 657 ZERO regressions); Drift #66 FK-ordering catalogued + resolved + regression-guarded; Y2 vulnerability_count forward-pin activated; P5.A lifecycle closure across docs + api/engine DRIFT-LOG #66 sync. Original plan content (PY1-PY4 + Stage 3 sub-step breakdown + D-deviation forecasts) preserved below as historical authority.
 
 **Date:** 2026-06-17.
 

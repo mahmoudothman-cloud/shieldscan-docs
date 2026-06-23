@@ -1,6 +1,6 @@
 # M9.A — AI Pipeline: Embedding + Deduplication (ADR-030): Design
 
-**Status:** Brainstorming chain Y-PROMOTION-TIMING + Q1-Q12 locks complete + V-MM pre-verification + V-NN pre-Stage-1 refinements (this session); ready for Stage 2 implementation plan landing + Stage 3 3-commit implementation (C0 docs ADR-030 → C1 api pipeline.py rewrite + call-site + M9.0 test conversions → C2 api new tests + smoke) + Stage 4 P5.A.
+**Status:** CLOSED at M9.A Stage 3 + P5.A lifecycle closure (2026-06-23). ADR-030 canonical at SPEC §13 (d408b2c); Path C operational at api C1 (91ec273; Q5 B.c→query_points + Q9 B.a→`AsyncQdrantClient(":memory:")` deferred-resolutions locked at execution; Drift #66 FK-ordering catalogued + resolved); tests + Y2 activation at C2 (251960a; 35 tests, suite 657 ZERO regressions); P5.A lifecycle closure across docs + api/engine DRIFT-LOG #66 sync. Original brainstorming-chain content (Y-PROMOTION-TIMING Path C + Q1-Q12 + 35+ sub-decisions + §9 V-MM/V-NNE pre-grounding) preserved below as historical authority.
 
 **Date:** 2026-06-16.
 
