@@ -2723,6 +2723,123 @@ M8.1 milestone audit V-K-F classified as arc-evolution-pivot territory; M81_PV +
 
 ---
 
+### ADR-031: AI Pipeline: Correlation + Scoring (M9.B)
+
+**Status:** Operational at M9.B Stage 3 C0 docs landing (this commit). Composes ADR-013 (Python sole writer) + ADR-014 (Redis Streams progress) + ADR-022 (recon as pre-scan helpers) + ADR-028 (Phase-1 execution model) + ADR-029 (M9.0 AI pipeline foundation) + ADR-030 (M9.A embedding + deduplication).
+
+**Date:** 2026-06-26.
+
+#### Context
+
+Per SPEC §8.2 Cross-Layer Correlation Algorithm + §8.3 Severity Scoring Formula: post-deduplication (M9.A operational; ADR-030 Path C cluster→Vulnerability promotion), Vulnerabilities require cross-layer correlation (DAST↔SAST + cross-engine_category generalized per Q2 lock) + composite severity scoring (final_score = base_cvss × corroboration × exploitability per SPEC §8.3).
+
+M9.B (Tasks 9.3 + 9.4) implements: (1) rule-based weighted correlation scoring per SPEC §8.2 weights (cwe_exact 0.40 + cwe_parent 0.25 + url_path 0.20 + finding_type 0.30 + parameter_name 0.15; threshold ≥0.75); (2) deterministic severity scoring per SPEC §8.3 multipliers (corroboration 1.0/1.3/1.5 + exploitability 0.8/1.0/1.2/1.5). Both are mechanistically distinct from M9.A's Qdrant cosine dedup — correlation evaluates structural finding attributes, not semantic text similarity.
+
+Path B "link + corroborate" (Y-CORRELATION-MERGE-VS-LINK gate-decision) preserves ADR-030 Path C cluster→Vulnerability promotion architectural lock literally; correlation creates link relationships (Vulnerability.correlation_cluster_id UUID + union-find clustering) rather than row deletion; SPEC §8.2 "merged into corroborated vulnerability" interpreted as "linked into corroboration relationship."
+
+#### Decision
+
+**Path B + Q1-Q18 + ~45+ sub-decisions ratified per Stage 1 design doc `d10be51` + Stage 2 plan `a172fd1`:**
+
+**Gate-decision Y-CORRELATION-MERGE-VS-LINK: Path B — Link + Corroborate.** Two Vulnerabilities scoring ≥0.75 per SPEC §8.2 → both rows preserved; correlation creates link relationships via Vulnerability.correlation_cluster_id (UUID; union-find); corroborated_count + severity refined per SPEC §8.3; no row deletion.
+
+**Stage 3 4-commit decomposition per Q18 lock:**
+- C0 docs ADR-031 at SPEC §13 (this commit; ~80-120 LoC)
+- C1 api schema + modules (alembic migration + cwe_hierarchy.py + correlation.py + scoring.py + vulnerabilities.py; ~400-550 LoC)
+- C2 api pipeline integration (pipeline.py + test_pipeline.py extensions; ~200-300 LoC)
+- C3 api tests + smoke (test_correlation.py + test_scoring.py + test_cwe_hierarchy.py + conftest.py + test_m9b_smoke.py; ~430-660 LoC)
+
+**Correlation algorithm (Q1-Q4 + Q6-Q7):** correlation_score sync function takes Vulnerability instances + loads raw_finding fields via raw_finding_ids join; SPEC §8.2 canonical weights; ≥0.75 threshold + correlation_score stored; SQL pairwise full-scan within scan (per-scan correlation per Q3; cross-engine_category generalized per Q2 B.b; skip same-engine pairs per Q2 C.a); itertools.combinations + neutral naming + asymmetric url_path tried both directions with max-not-sum.
+
+**Correlation storage (Q8):** Vulnerability.correlation_cluster_id nullable UUID column + union-find clustering at correlation pass; transitive A↔B↔C automatically merged into a single cluster; Y2 vulnerability_count adapter via DISTINCT(correlation_cluster_id).
+
+**Undefined-helper resolutions (Q5/Q6/Q7):**
+- is_cwe_parent_child: CWE_PARENT_CHILD hardcoded dict at src/app/services/ai/cwe_hierarchy.py + CWEHierarchy class + module-level singleton (top-~50 CWE coverage per MITRE CWE-1000 Research View)
+- route_map: heuristic 1-to-1 URL-path↔code_file matching helper (last segment match against code_file basename; conservative ambiguous-skip)
+- extract_params: hybrid raw_finding.parameter primary + URL query param parsing + multi-language regex (Flask + Django + FastAPI + Express + Spring) + length ≥3 filter + normalized comparison
+
+**Scoring formula (Q9-Q12):** compute_severity_score sync function at src/app/services/ai/scoring.py; final_score = base_cvss × corroboration_multiplier × exploitability_multiplier; cap at 10.0; default base_cvss=5.0 when null; PoC-derivation per RawFinding.tool_name ∈ {"nuclei", "sqlmap"} → 1.2 multiplier (per V-UUE DEFERRED-EMPIRICAL pre-grounding; the field is tool_name, not engine_name); auth/public default 1.0 at M9.B (forward-pinned to M9.C/D + production-readiness); add Vulnerability.severity_score Float column; standard CVSS mapping (≥9.0 CRITICAL / 7.0-8.9 HIGH / 4.0-6.9 MEDIUM / <4.0 LOW); engine-distinct corroborated_count within correlation cluster.
+
+**Pipeline composition (Q13):** Sequential extension of M9.A pipeline.run(): embed → dedup_and_promote → _correlate_vulnerabilities → _score_vulnerabilities → flush; defensive skip when <2 distinct engine_categories present.
+
+**Cost-tracking (Q14):** No cost tracking at M9.B (deterministic computation; no AI calls); ai_api_calls infrastructure operational from M9.0 but unused at M9.B; forward-pin Claude tie-break for near-threshold correlations (0.65-0.85) at production-readiness.
+
+**Schema migration (Q16):** Single alembic migration at C1 + correlation_cluster_id indexed (Y2 DISTINCT queries) + severity_score not-indexed (M10 forward-pin) + explicit downgrade() implementation; revision after b7e4a1f93c2d (M9.0 C1 head).
+
+#### Rationale
+
+**Path B over Path A (Merge) or Path C (Hybrid):** Preserves M9.A Path C architectural lock literally (Vulnerabilities created at clustering remain; M9.B composes + extends, doesn't replace). Path A would actively contradict M9.A by deleting rows M9.A created. Path C adds architectural surface without clear value at M9.B (phased complexity defers merge to M9.D without justification).
+
+**Rule-based weighted scoring (not embedding cosine):** SPEC §8.2 is mechanistically distinct from M9.A's Qdrant cosine dedup. Cross-layer correlation evaluates structural finding attributes (CWE + endpoint + parameter + code location), not semantic text similarity. Determinism + audit-trail value vs embedding similarity at this layer.
+
+**Per-scan correlation (Q3):** Honors Q5-M9.0 per-scan dedup lock literally. Cross-scan correlation forward-pinned to M11+ alongside cross-scan dedup + regression-detection + fix-verification.
+
+**Hardcoded CWE dict (Q5):** Top-~50 web-app CWE coverage sufficient at pre-launch; embedded MITRE library forward-pinned to production-readiness when CWE diversity exceeds.
+
+**Heuristic route_map (Q6):** Cost-zero + conservative 1-to-1 matching minimizes false positives; AI/uploaded/static-analysis alternatives forward-pinned to production-readiness.
+
+**Deterministic scoring (Q14):** SPEC §8.3 formula is mechanically deterministic; no AI call needed at M9.B; Claude tie-break for ambiguous cases forward-pinned to production-readiness.
+
+#### Rejected Alternatives
+
+**Path A (Merge into single Vulnerability row):** Two Vulnerabilities scoring ≥0.75 merged into one row with raw_finding_ids union + row deletion. Rejected: contradicts ADR-030 Path C architectural lock (M9.A creates separate Vulnerabilities per cluster; Path A would delete some at correlation time); FK migration burden (raw_finding.vulnerability_id → merged ID); lost engine_category accuracy at merged row.
+
+**Path C (Hybrid Link at M9.B + Merge at M9.D):** Phased complexity defers merge semantics to M9.D orchestrator. Rejected: adds architectural surface (two algorithms to maintain); SPEC §8.2 "merged" wording can be interpreted as "linked" at M9.B without requiring a later merge stage.
+
+**(A.a) Operates on Vulnerability rows only at Q1 / (A.b) raw_finding rows only:** Rejected. (A.a) lacks raw_finding fields (parameter + code_file + code_snippet) for correlation evaluation. (A.b) conflicts with M9.A Path C (raw_findings already promoted to Vulnerabilities at M9.A).
+
+**(B) Cross-scan correlation at Q3:** Rejected at M9.B. Premature complexity at pre-launch; M11+ regression-detection territory.
+
+**(B) Embed CWE data file / (C) pip library at Q5:** Rejected at M9.B. ~2-5MB repo size addition + parsing overhead (B); external dependency burden (C). Top-~50 hardcoded coverage sufficient at pre-launch.
+
+**(A) AI route_map via Claude / (C) static analysis / (D) empty map at Q6:** Rejected. (A) cost-incurring + complexity. (C) very-high complexity multi-framework support. (D) loses url_path 0.20 weight + edge case correlation value.
+
+**(A) regex identifiers / (C) common-name dictionary at Q7:** Rejected. (A) too noisy, high false-positive. (C) misses uncommon parameter names.
+
+**(B) junction table only at Q8:** Rejected at M9.B. Cluster membership requires graph traversal; transitive clustering not automatic. Junction table forward-pinned for per-pair audit at production-readiness.
+
+**(A) full URL heuristic derivation including auth/public at Q10:** Rejected. URL heuristics 30-70% accuracy insufficient; introduces more noise than signal. Default 1.0 + forward-pin to M9.C/D when scope metadata captured.
+
+**(B) Optional Claude tie-break at Q14:** Rejected at M9.B. Introduces M9.B AI cost + complexity for marginal benefit. Forward-pinned to production-readiness with threshold-tuning analysis.
+
+#### Consequences
+
+**Positive:**
+- ADR-030 Path C architectural lock preserved (composition + extension, not replacement)
+- SPEC §8.2 + §8.3 canonical algorithms implemented deterministically
+- Y2 Task 8.3β vulnerability_count semantics preserved via DISTINCT(correlation_cluster_id) adapter
+- corroborated_count + severity_score updates enable M10 Report ranking
+- Cross-layer evidence (DAST + SAST cross-engine corroboration) operational at M9.B
+- Zero AI cost at M9.B (deterministic computation per Q14)
+- Forward-pin chain established for production-readiness optimizations (per Stage 1 design doc §7)
+
+**Negative / Trade-offs:**
+- Hardcoded CWE dict requires manual extension as CWE diversity grows (mitigated: top-~50 covers ~95% of web-app vulnerabilities)
+- Heuristic route_map accuracy variable (conservative 1-to-1 matching minimizes false positives)
+- Auth/public exploitability inputs default to 1.0 at M9.B (mitigated: PoC derivation reliable; auth/public forward-pinned to M9.C/D)
+- N² pairwise iteration complexity (mitigated: pre-launch scale ~10-50 Vulnerabilities/scan; cwe_id pre-filter optimization forward-pinned)
+- Union-find transitive clustering may over-cluster weak A↔C correlations (mitigated: forward-pin investigation at production-readiness scan corpus)
+
+#### Composition
+
+- **ADR-013** Python sole writer for scan state: M9.B writes Vulnerability.correlation_cluster_id + severity_score + corroborated_count from the api side only (engine emits events; never writes pipeline state)
+- **ADR-014** Redis Streams progress: M9.B is downstream of progress emission; correlation + scoring run in the in-api ai-pipeline consumer (no new wire contract)
+- **ADR-022** Recon as pre-scan helpers: unaffected; M9.B operates on promoted Vulnerabilities, not recon dispatch
+- **ADR-028** Phase-1 execution model: M9.B inherits Phase-1 single-provider semantics; deterministic computation requires no provider routing
+- **ADR-029** M9.0 AI pipeline foundation: M9.B extends pipeline.run() composition established at M9.0 C2 (ai_pipeline_consumer dispatching pipeline.run()); ai_api_calls cost-tracking schema preserved-but-unused per Q14
+- **ADR-030** M9.A embedding + deduplication: M9.B extends Path C cluster→Vulnerability promotion architectural lock; correlation operates on Vulnerability rows post-M9.A; preserves M9.A operational state
+
+#### Cross-references
+
+- **Specification:** §8.2 Cross-Layer Correlation Algorithm (canonical weights + threshold) + §8.3 Severity Scoring Formula (canonical multipliers) + §13 ADR-029/030/031 (architectural lineage)
+- **Implementation plan:** Tasks 9.3 (Cross-layer correlation) + 9.4 (Severity scoring)
+- **Design doc:** plans/2026-06-25-m9b-correlation-scoring-design.md (commit `d10be51`; Y-locks + Path B + V-UUE pre-grounding)
+- **Implementation plan doc:** plans/2026-06-25-m9b-correlation-scoring-implementation.md (commit `a172fd1`; PY1-PY8 + 4-commit breakdown)
+- **Composition:** ADR-013 + ADR-014 + ADR-022 + ADR-028 + ADR-029 + ADR-030
+- **CLAUDE.md Gotcha 5:** Cost-tracking mandate (operational from M9.0; ai_api_calls unused at M9.B per Q14)
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.
