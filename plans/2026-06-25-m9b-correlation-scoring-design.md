@@ -1,6 +1,6 @@
 # M9.B — AI Pipeline: Correlation + Scoring (ADR-031): Design
 
-**Status:** Brainstorming chain Y-CORRELATION-MERGE-VS-LINK Path B gate-decision + Q1-Q18 locks complete + V-TT pre-verification + V-UU pre-Stage-1 refinements (this session); ready for Stage 2 implementation plan landing + Stage 3 4-commit implementation (C0 docs ADR-031 → C1 schema + modules → C2 pipeline integration → C3 tests + smoke) + Stage 4 P5.A.
+**Status:** CLOSED at M9.B Stage 3 + P5.A lifecycle closure (2026-06-29). ADR-031 canonical at SPEC §13 (fb4b07e); Path B operational across api C1 (5dee684; migration ecfed70e05e4 + cwe_hierarchy + correlation + scoring NEW) + C2 (6c9e270; _correlate + _score wired into run(); Q1 evidence-loading correction within-lock) + C3 (f82c38a; 41 tests, suite 709 ZERO regressions; fixture-scoping correction within-lock); P5.A lifecycle closure across docs + api/engine DRIFT-LOG. Cumulative drift count preserved at 66 (no Drift #67). Original brainstorming-chain content (Path B gate + Q1-Q18 + ~45+ sub-decisions + §9 V-UUE pre-grounding) preserved below as historical authority.
 
 **Date:** 2026-06-25.
 

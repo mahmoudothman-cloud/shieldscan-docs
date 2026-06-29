@@ -1,6 +1,6 @@
 # M9.B — AI Pipeline: Correlation + Scoring (ADR-031): Implementation Plan
 
-**Status:** PY1-PY8 plan-level Y-decisions + Stage 3 4-commit sub-step breakdown + verification cascade scope + per-commit D-deviation forecasts (this commit); ready for Stage 3 4-commit lifecycle (C0 docs ADR-031 → C1 schema + modules → C2 pipeline integration → C3 tests + smoke) + Stage 4 P5.A.
+**Status:** CLOSED at M9.B Stage 3 + P5.A lifecycle closure (2026-06-29). PY1-PY8 plan-level Y-decisions operational across the 4-commit Stage 3 (C0 docs ADR-031 fb4b07e → C1 schema + modules 5dee684 → C2 pipeline integration 6c9e270 → C3 tests + smoke f82c38a; 41 tests, suite 709 ZERO regressions); PY5 tool_name + PY6 lower-FK-risk mitigations validated; the C2 Q1-evidence + C3 fixture-scoping corrections were within-lock test-gate catches (not catalogued; count preserved at 66); P5.A lifecycle closure across docs + api/engine DRIFT-LOG. Original plan content (PY1-PY8 + 4-commit breakdown + D-deviation forecasts) preserved below as historical authority.
 
 **Date:** 2026-06-26.
 

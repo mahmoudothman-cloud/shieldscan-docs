@@ -2249,6 +2249,32 @@ git commit -m "feat(api): add attack surface endpoint"
 >
 > **M9.B activation trigger:** ***"Begin M9.B — Correlation + Scoring"*** (Tasks 9.3+9.4; per Q11-M9.0 strict linear sequencing).
 
+> **🔒 M9.B — AI PIPELINE: CORRELATION + SCORING (ADR-031) — LIFECYCLE CLOSED (2026-06-29):**
+>
+> Second real-AI sub-milestone (Tasks 9.3+9.4). Composes ADR-030 by extending `pipeline.run()` with cross-layer correlation + composite severity scoring. ADR-031 (SPEC §13) is the canonical authority. Y-CORRELATION-MERGE-VS-LINK **Path B** (link + corroborate; no row deletion) preserves the M9.A Path C lock literally.
+>
+> **M9.B lifecycle artifacts (9-commit chain):**
+> - Stage 1 design doc: plans/2026-06-25-m9b-correlation-scoring-design.md (commit d10be51; Path B gate + Q1-Q18 + ~45+ sub-decisions + §9 V-UUE tool_name pre-grounding)
+> - Stage 2 implementation plan: plans/2026-06-25-m9b-correlation-scoring-implementation.md (commit a172fd1; PY1-PY8 + 4-commit Stage 3 breakdown + D-deviation forecasts)
+> - Stage 3 C0 docs ADR-031 at SPEC §13 (commit fb4b07e; +117 LoC; between ADR-030 + §14)
+> - Stage 3 C1 api schema + modules (commit 5dee684; +446 LoC; alembic ecfed70e05e4 migration — correlation_cluster_id indexed + severity_score; cwe_hierarchy.py + correlation.py + scoring.py NEW; PY5 tool_name + PY6 lower-FK-risk validated; 0 drifts at the strongest-risk commit)
+> - Stage 3 C2 api pipeline integration (commit 6c9e270; +310 LoC; `_correlate_vulnerabilities` + `_score_vulnerabilities` wired into run(); Q1 evidence-loading correction caught pre-commit by the test gate; within-lock, not catalogued)
+> - Stage 3 C3 api tests + smoke (commit f82c38a; +584 LoC; 41 new tests; full suite 709 ZERO regressions; fixture-scoping correction caught pre-commit by the test gate; within-lock, not catalogued)
+> - Stage 4 P5.A docs annotations (this commit) + persistent DRIFT-LOG sync (api + engine commits forthcoming)
+>
+> **What M9.B lands (deterministic; no AI calls per Q14; SPEC §8.2 + §8.3):**
+> - Cross-layer correlation: rule-based weighted scoring (cwe_exact 0.40 + cwe_parent 0.25 + url_path 0.20 + finding_type 0.30 + parameter_name 0.15; threshold ≥0.75); cross-engine_category generalized; correlation over the representative raw_finding's evidence fields (Q1)
+> - CWE hierarchy (Q5 hardcoded top-~50) + heuristic route_map (Q6) + multi-language parameter extraction (Q7)
+> - Path B link: `Vulnerability.correlation_cluster_id` via union-find (transitive A↔B↔C); `corroborated_count` = engine-distinct within cluster (Q12); **no row deletion**
+> - Composite scoring: `severity_score` = base_cvss × corroboration × exploitability, capped 10.0 (Q9); PoC-derivation from `RawFinding.tool_name ∈ {nuclei, sqlmap}` (Q10/PY5); CVSS-band → severity enum (Q11)
+> - Schema: `correlation_cluster_id` (indexed) + `severity_score` columns (migration `ecfed70e05e4`, revises `b7e4a1f93c2d`)
+>
+> **Drift catalog at M9.B lifecycle:** **none** — cumulative count **preserved at 66** through all of M9.B. Drift #66 (M9.A C1) remains the latest catalogue entry. C1+C2+C3 landed at 0 catalogued drifts via PY5 (tool_name pre-grounding), PY6 (standalone-column lower-FK-risk), and test-gate discipline (the C2 Q1-evidence and C3 fixture-scoping corrections were within-lock under-implementations caught pre-commit — not Y-lock deviations, not increments).
+>
+> **Cumulative session-tail framing-drift count at M9.B close: 66** (unchanged since M9.A).
+>
+> **M9.C activation trigger:** ***"Begin M9.C — Fix Generation + Executive Summary"*** (Tasks 9.5+9.6; per Q11-M9.0 strict linear sequencing).
+
 ### Task 9.1: OpenAI embeddings service
 
 > **🔒 CLOSED at M9.A Stage 3 C1 (api 91ec273) + tests C2 (251960a); ADR-030 Path C operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-030). Real implementation: `_embed_findings` + `_construct_embedding_input` + `_embed_batch_with_retry_and_usage` in `src/app/services/ai/pipeline.py` (batch=100, labeled multi-field input incl. target_url, hybrid 429 retry + rule-based fingerprint fallback, per-batch ai_api_calls cost logging). Tests: `tests/services/ai/test_embed_findings.py`.
@@ -2327,6 +2353,8 @@ async def deduplicate(findings: list[RawFinding], embeddings: list[list[float]])
 
 ### Task 9.3: Cross-layer correlation (DAST↔SAST)
 
+> **🔒 CLOSED at M9.B Stage 3 C1 (api 5dee684) + C2 (6c9e270); tests at C3 (f82c38a); ADR-031 Path B operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-031). Real implementation: `correlation.py` (CORRELATION_WEIGHTS + correlation_score + build_route_map + extract_params_* + iter_cross_engine_pairs + union_find_clusters) + `cwe_hierarchy.py` (Q5) + `_correlate_vulnerabilities` in `pipeline.py`. Path B link via `Vulnerability.correlation_cluster_id` (union-find; no row deletion); `corroborated_count` engine-distinct. Tests: `tests/services/ai/test_correlation.py` + `test_cwe_hierarchy.py`.
+
 **Files:**
 - Create: `src/app/services/ai/correlation.py`
 - Test: `tests/services/ai/test_correlation.py`
@@ -2354,6 +2382,8 @@ git commit -m "feat(ai): add DAST-SAST cross-layer correlation with weighted sco
 ---
 
 ### Task 9.4: Severity scoring
+
+> **🔒 CLOSED at M9.B Stage 3 C1 (api 5dee684) + C2 (6c9e270); tests at C3 (f82c38a); ADR-031 §8.3 operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-031). Real implementation: `scoring.py` (compute_severity_score + compute_corroboration_multiplier + compute_exploitability_multiplier + _map_score_to_severity_enum + POC_PROVEN_TOOL_NAMES) + `_score_vulnerabilities` in `pipeline.py`. `severity_score` = base_cvss × corroboration × exploitability (capped 10.0); PoC via `RawFinding.tool_name` (Q10/PY5). Tests: `tests/services/ai/test_scoring.py`.
 
 **Files:**
 - Create: `src/app/services/ai/scoring.py`
