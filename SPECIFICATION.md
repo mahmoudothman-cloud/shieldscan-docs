@@ -2840,6 +2840,55 @@ Path B "link + corroborate" (Y-CORRELATION-MERGE-VS-LINK gate-decision) preserve
 
 ---
 
+### ADR-032: AI Pipeline — Fix Generation + Executive Summary (M9.C)
+
+**Status:** Accepted (M9.C Stage 3 C0 landing this commit)
+**Date:** 2026-06-28
+**Decision-makers:** ShieldScan core team
+**Related:** ADR-029 (AI Foundation + ai_api_calls + Gotcha 5) + ADR-030 (M9.A Path C cluster→Vulnerability promotion) + ADR-031 (M9.B Path B link-and-corroborate) + ADR-013 (Python Sole Writer for Scan State) + SPEC §8.4 (Mobile-Specific AI Fix Generation) + SPEC §8.5 (Multi-Provider AI Strategy)
+
+#### Context
+
+M9.C is the THIRD real-AI sub-milestone of the M9 AI Analysis Pipeline (after M9.0 foundation + M9.A clustering/promotion + M9.B correlation/scoring). M9.C lands Tasks 9.5 (AI fix generation with mobile context) + 9.6 (executive summary) per SPEC §8.4 + §8.5 canonical authority. M9.C is the FIRST sub-milestone making real Anthropic Claude API calls; ai_api_calls cost-tracking + check_budget + log_ai_call infrastructure scaffolded since M9.0 C1 transitions from architectural-readiness to operational-load per CLAUDE.md Gotcha 5 cost-tracking mandate. SPEC §8.5 budget targets (Quick $0.08 / Full web $0.25 / Full spectrum $0.55 per scan) become enforced-at-call-site.
+
+#### Decision
+
+Path A per-Vulnerability Claude Sonnet calls for fix generation. One Claude Sonnet API call per Vulnerability via asyncio.gather parallelism; per-vuln check_budget pre-call enforcement; isolated failure semantics + graceful `_fallback_fix_template` per vuln; per-vuln ai_api_calls row granularity; per-vuln idempotency via `WHERE ai_fix_text IS NULL` regenerate-only semantics. Single Claude Sonnet call per scan for executive summary; pre-call check_budget; deterministic minimal fallback summary on Claude failure (per Q11 C.c severity counts + 4-section structure). Sequential composition pipeline.run() extension after `_score_vulnerabilities` helper from M9.B (per Q13 A.a + B.a; before db.flush() per M9.B C2 `6c9e270` atomic-scan pattern). Defensive skip for zero-vuln scans (per Q13 C.b; trivial deterministic executive_summary). Structured prose output for fix generation (`## Explanation` / `## Fix Code` / `## Remediation Steps`; max 500 words) + 4-section structure for executive summary (`## Executive Summary` / `## Key Findings` / `## Risk Posture` / `## Recommended Actions`; max 600 words; C-level framing per Q9 C.b). 3-attempt exponential backoff retry on Claude API errors (1s/2s/4s; per Q8 A.b + M9.A Q3 C.c precedent). Threshold-based `Scan.ai_pipeline_degraded` activation when ≥3 fallbacks OR ≥30% scan vulns hit fallback (per Q8 B.b).
+
+#### Composition
+
+- **ADR-029 foundation:** ai_api_calls + check_budget + log_ai_call infrastructure operational since M9.0 C1; M9.C activates operational-load.
+- **ADR-030 M9.A:** Path C cluster→Vulnerability promotion preserved; Vulnerabilities (post-M9.A) are M9.C fix-gen + summary input.
+- **ADR-031 M9.B:** Path B link-and-corroborate preserved; correlation_cluster_id + severity_score + corroborated_count operational as M9.C input signals.
+- **ADR-013 sole-writer:** api writes Vulnerability.ai_fix_text + Scan.executive_summary; engine + workers don't touch these fields.
+- **SPEC §8.4 Mobile-Specific Fix Generation:** `_build_mobile_context` populates platform/language/component/permission/code-location per EngineCategory.MOBILE detection (per Q3).
+- **SPEC §8.5 Multi-Provider AI Strategy:** Claude Sonnet locked for both fix-gen + executive summary (Opus + Haiku Phase-2 forward-pinned); budget targets enforced via check_budget pre-call.
+
+#### Consequences
+
+- Real Anthropic Claude API cost dependency operational at M9.C; `ESTIMATED_FIX_COST_USD` = $0.025 conservative upper-bound + `ESTIMATED_SUMMARY_COST_USD` = $0.05; per-scan cost ~$0.05-0.55 within SPEC §8.5 budgets.
+- ai_api_calls row volume ~10-30 per scan (per-vuln fix-gen calls + 1 summary call); cost-tracking granularity supports per-vuln cost analysis + threshold tuning.
+- Per-vuln idempotency natural; re-running scan regenerates only NULL ai_fix_text vulns; per-scan summary idempotency similar (skip if executive_summary IS NOT NULL).
+- Per-vuln failure isolation (Path A): one vuln fix-gen failure ≠ all-failures; customer UX bounded.
+- Budget exhaustion graceful degradation: per-vuln check_budget catches mid-scan exhaustion; remaining vulns gracefully fall back to `_fallback_fix_template`; partial fix-gen better than all-or-nothing.
+- Threshold-based Scan.ai_pipeline_degraded preserves degraded-state signal for customer UI + admin monitoring.
+- Real Anthropic SDK integration novel territory; V-AB DEFERRED-EMPIRICAL pre-grounding markers operationalized at V-BB pre-C1 + V-CC pre-C2 cascades per PY1.
+- Circuit-breaker forward-pinned to production-readiness per Gate-2 B (activation criteria: ≥5% scans cascading OR budget exhaustion >10/day OR Anthropic outages >1h/quarter).
+
+#### Forward-pins
+
+- Path B batched-call optimization at production-readiness when cost pressure ~$0.30+/scan threshold OR Quick scan budget exceedances.
+- Path C cluster-batched optimization when M9.B cluster density exceeds ~30% of scan vulns (correlation density empirical analysis).
+- Add vuln-count-aware fallback to Path B for high-vuln-count scans (>50 vulns) at production-readiness.
+- Anthropic prompt caching at production-readiness (FIX_GEN_SYSTEM_PROMPT + SUMMARY_SYSTEM_PROMPT cacheable; reduces per-call cost ~50%).
+- Dynamic cost estimation at production-readiness (replace fixed $0.025 + $0.05 with tiktoken-based prompt sizing).
+- Admin force-regenerate flag at production-readiness (Q7 + Q12 idempotency override).
+- Multi-provider abstraction layer (ADR-013 multi-provider future Phase-2 per ADR-028 single-provider Phase-1 lock).
+- Circuit-breaker activation criteria (per Gate-2 B forward-pin).
+- M10 Report layer integration: ai_fix_text + executive_summary surface in customer reports.
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.

@@ -2397,6 +2397,19 @@ git commit -m "feat(ai): add DAST-SAST cross-layer correlation with weighted sco
 
 ---
 
+> **M9.C — AI Pipeline: Fix Generation + Executive Summary** (Tasks 9.5+9.6) — IN PROGRESS at Stage 3 C0 ADR-032 landing this commit.
+>
+> Stage 1 design doc: `plans/2026-06-28-m9c-fix-gen-summary-design.md` (commit `261cf10`) — 18 architectural locks (2 gate-decisions + Q1-Q16) via Mode 1 brainstorming chain.
+> Stage 2 implementation plan: `plans/2026-06-28-m9c-fix-gen-summary-implementation.md` (commit `f86a7b0`) — PY1-PY8 plan-level Y-decisions + 3-commit Stage 3 sub-step breakdown + V-BB+V-CC pre-verification cascade design.
+> Stage 3 C0 ADR-032 SPEC §13 canonical: this commit.
+> Stage 3 C1 api modules + integration: forthcoming.
+> Stage 3 C2 api tests + smoke: forthcoming.
+> Stage 4 P5.A annotations: forthcoming (Tasks 9.5+9.6 Status field CLOSED annotations at P5.A per M9.B P5.A `42259cf` precedent).
+>
+> M9.C is THIRD real-AI sub-milestone + FIRST making real Anthropic Claude API calls; activates ai_api_calls cost-tracking infrastructure scaffolded since M9.0 per CLAUDE.md Gotcha 5 mandate.
+
+---
+
 ### Task 9.5: Claude fix generation with mobile context
 
 **Files:**
