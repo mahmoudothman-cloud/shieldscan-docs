@@ -2192,6 +2192,8 @@ git commit -m "feat(api): add attack surface endpoint"
 
 ## Milestone 9: AI Analysis Pipeline (Week 5-6)
 
+> **🔒 MILESTONE 9 — AI ANALYSIS PIPELINE — ENTIRELY CLOSED (2026-07-02).** All 5 sub-milestones closed: **M9.0** (foundation; ADR-029) + **M9.A** (embed/dedup; ADR-030) + **M9.B** (correlate/score; ADR-031) + **M9.C** (fix-gen/summary; ADR-032; FIRST real Anthropic Claude integration; cost-tracking operational per Gotcha 5) + **M9.D** (orchestrator; ADR-033; closure-by-composition). Pipeline operational end-to-end: completions-event → dispatch → embed → dedup → correlate → score → fix-gen → summary → terminal metadata (completed_at/error_message); 751 tests green. ⇒ **M10 activation trigger:** ***"Begin M10 — Report Architecture"***.
+
 > **🔒 M9.0 — AI ANALYSIS PIPELINE FOUNDATION (ADR-029) — LIFECYCLE CLOSED (2026-06-16):**
 >
 > M9 is decomposed into sub-milestones per ADR-029 Q11 (strict linear): **M9.0** (this foundation) → **M9.A** (embed/dedup; Tasks 9.1+9.2) → **M9.B** (correlate/score; Tasks 9.3+9.4) → **M9.C** (fix-gen/summary; Tasks 9.5+9.6) → **M9.D** (orchestrator; Task 9.7). The Task 9.1-9.7 plan-literal pseudo-code below is INFORMATIONAL not BINDING; ADR-029 (SPEC §13) is the canonical authority, and the sub-milestones land the real pipeline stages.
@@ -2508,19 +2510,23 @@ git commit -m "feat(ai): add Claude fix generation with mobile-specific prompts"
 
 ---
 
-> **M9.D — AI Pipeline: Orchestrator** (Task 9.7) — IN PROGRESS at Stage 3 C0 ADR-033 landing this commit.
+> **🔒 M9.D — AI Pipeline: Orchestrator** (Task 9.7) — **CLOSED at Stage 3 + P5.A lifecycle closure (2026-07-02).**
 >
-> Stage 1 design doc (compressed; absorbs Stage 2 per Q5): `plans/2026-07-02-m9d-orchestrator-design.md` (commit `988326e`) — 8 locks (Gate-1 gap-closure + Gate-2 throttle-pin-honored + Q1-Q6).
-> Stage 3 C0 ADR-033 SPEC §13 canonical: this commit.
-> Stage 3 C1 ai_pipeline_consumer.py wiring: forthcoming.
-> Stage 3 C2 e2e smoke: forthcoming.
-> Stage 4 P5.A: forthcoming (Task 9.7 CLOSED-by-composition annotation at P5.A).
+> Stage 1 design doc (compressed; absorbs Stage 2 per Q5): `plans/2026-07-02-m9d-orchestrator-design.md` (commit `988326e`) — 8 locks (Gate-1 gap-closure + Gate-2 throttle-pin-honored + Q1-Q6) via Mode 2 compressed brainstorming + adaptive Path δ SMALL classification.
+> Stage 3 C0 ADR-033 SPEC §13 canonical: `1583f27`.
+> Stage 3 C1 ai_pipeline_consumer.py terminal-metadata wiring: `5c092df` (completed_at at COMPLETED/PARTIAL/FAILED + error_message FAILED str(exc) via `_fail_scan(*, error)` threading + PARTIAL "N of M" summary; V-EEC 8th averted-prediction catch; ADR-013 sole-writer compliant; Gate-2 honored — fix_generation.py untouched).
+> Stage 3 C2 e2e orchestrator smoke: `2f155f0` (4 tests green first-run; V-EEC threading verified e2e; suite 751 ZERO regressions).
+> Stage 4 P5.A Commit 1 docs annotations: this commit. P5.A Commit 2 api DRIFT-LOG + Commit 3 engine cross-ref: forthcoming.
 >
-> V-AA established the orchestration chain OPERATIONAL since M9.0 C2 / Task 4.2; the Task 9.7 run_ai_pipeline pseudo-code is superseded per the INFORMATIONAL-not-BINDING header; M9.D = gap-closure (completed_at/error_message wiring + e2e) + ADR-033 closure-by-composition.
+> **Drift catalog at M9.D lifecycle: none** — cumulative count **preserved at 66**. 8-instance averted-prediction lineage (V-EEC exception-threading latest); 3-instance test-gate-within-lock pattern (not incremented at M9.D — C2 tests green first-run).
+>
+> Forward-pins: webhooks→Task 12.5; CANCELED completed_at→routes-touch task; fix-gen throttle→production-readiness (M9.C Gate-1 pin honored through M9.D); autouse-anthropic-stub→production-readiness; stream-key TTL→OPS.
 
 ---
 
 ### Task 9.7: Full AI pipeline orchestrator
+
+> **🔒 CLOSED-BY-COMPOSITION at M9.D (ADR-033; per Q6).** The plan-literal `run_ai_pipeline` pseudo-code below is INFORMATIONAL (superseded by ADR-033 per the Milestone-9 INFORMATIONAL-not-BINDING header). The orchestrator landed incrementally: Task 4.2 `cf3b30a` (ScanOrchestrator dispatch + CompletionsConsumer) → M9.0 C2 (ai-pipeline dispatch seam + AIPipelineConsumer) → M9.A/B/C (`pipeline.run()` 6 stages: embed → dedup → correlate → score → fix-gen → summary) → M9.D `5c092df` (terminal-metadata wiring: completed_at + error_message) + `2f155f0` (e2e both-paths smoke). Real files: `src/app/services/ai_pipeline_consumer.py` + `tests/integration/test_m9d_orchestrator_smoke.py`.
 
 **Files:**
 - Create: `src/app/services/ai/pipeline.py`

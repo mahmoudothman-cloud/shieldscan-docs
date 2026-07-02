@@ -1,6 +1,6 @@
 # M9.D AI Pipeline: Orchestrator — Stage 1 Design Doc (compressed; absorbs Stage 2 plan per Q5)
 
-**Status:** Stage 1 design ratified (design + plan compressed); Stage 3 implementation forthcoming.
+**Status:** CLOSED at M9.D Stage 3 + P5.A lifecycle closure (2026-07-02). ADR-033 canonical at SPEC §13 (`1583f27`); gap-closure operational across api C1 (`5c092df`; terminal-metadata wiring; V-EEC 8th averted-prediction catch) + C2 (`2f155f0`; 4 e2e tests green first-run; suite 751 ZERO regressions); P5.A Commit 1 docs this commit + Commits 2 (api DRIFT-LOG) + 3 (engine cross-ref) forthcoming. M9.D closes MILESTONE 9 ENTIRELY. Cumulative drift count preserved at 66. Original compressed design+plan content (8 locks + V-EE §7 grounding) preserved below as historical authority.
 
 **Date:** 2026-07-02.
 
