@@ -2889,6 +2889,47 @@ Path A per-Vulnerability Claude Sonnet calls for fix generation. One Claude Sonn
 
 ---
 
+### ADR-033: AI Pipeline — Orchestrator (M9.D)
+
+**Status:** Accepted (2026-07-02, M9.D Stage 3 C0)
+**Decision-makers:** ShieldScan core team
+**Related:** ADR-013 (Python Sole Writer for Scan State) + ADR-014 (Redis Streams, not Pub/Sub) + ADR-029 (AI Foundation + Q1 e.ii dispatch) + ADR-030 (M9.A) + ADR-031 (M9.B) + ADR-032 (M9.C) + Task 9.7 (INFORMATIONAL)
+
+#### Context
+
+M9.D is the FINAL M9 sub-milestone. Task 9.7 sketched a `run_ai_pipeline` orchestrator, but V-AA pre-verification established the orchestration chain has been OPERATIONAL since M9.0 C2 / Task 4.2: CompletionsConsumer (all-jobs-terminal) → `ScanOrchestrator.dispatch_ai_pipeline` (sets ANALYZING + LPUSH `shieldscan:ai_pipeline` + audit) → AIPipelineConsumer (BRPOP drain) → `pipeline.run()` 6-stage composition (embed → dedup → correlate → score → fix → summary; landed M9.A/B/C) → terminal re-derivation from sibling ScanJobs (PARTIAL if any_failed else COMPLETED) + SCAN_COMPLETED audit + `_fail_scan` crash path (FAILED + ai_pipeline_degraded). The Task 9.1-9.7 pseudo-code is INFORMATIONAL-not-BINDING per the Milestone-9 header.
+
+#### Decision
+
+M9.D is closure-by-composition + a hardening delta, NOT new orchestrator code:
+1. `Scan.completed_at` stamped at consumer terminal transitions COMPLETED/PARTIAL/FAILED (Q1). Invariant: *consumer terminal status set ⟺ completed_at stamped*. CANCELED completed_at forward-pinned to a routes-touch task.
+2. `Scan.error_message` written on FAILED (`str(exception)`) + PARTIAL ("N of M scan jobs failed; partial results available") per Q2; COMPLETED leaves it null; the `ai_pipeline_degraded` boolean retains the degradation signal.
+3. One e2e both-paths orchestration smoke (Q4).
+4. Fix-gen throttle NOT activated — the M9.C Gate-1 forward-pin is honored (sequential preserved; production-readiness empirical trigger).
+5. Webhooks NOT stubbed — `fire_scan_completed_webhooks` forward-pinned to Task 12.5.
+
+#### Composition
+
+- **ADR-013 sole-writer:** the completed_at/error_message writes are Python-consumer-side — sole-writer compliant; workers still never touch PG.
+- **ADR-014:** Streams/Pub-Sub signaling topology unchanged.
+- **ADR-029** foundation + **ADR-030/031/032** pipeline stages composed in `run()`.
+
+#### Consequences
+
+- Task 9.7 goes CLOSED-by-composition at M9.D P5.A: the orchestrator was landed incrementally across Task 4.2 (dispatch + completions) + M9.0 C2 (ai-pipeline dispatch seam + consumer) + M9.A/B/C (pipeline stages) + M9.D (terminal-metadata wiring + e2e).
+- No migration — `completed_at` + `error_message` fields existed since earlier milestones, unwired until M9.D.
+- M9 (AI Analysis Pipeline) closes entirely at M9.D P5.A.
+
+#### Forward-pins
+
+- Webhooks (`fire_scan_completed_webhooks`) → Task 12.5 (delivery/retry/signing/subscription).
+- CANCELED completed_at → routes-touch task (cancel endpoint at routes/scans.py).
+- Fix-gen throttle (Semaphore/asyncio.gather) → production-readiness per the M9.C Gate-1 pin.
+- Autouse-anthropic-stub suite-speed cleanup → production-readiness.
+- Stream-key cleanup TTL → OPS milestone (per ADR-014 open follow-up).
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.

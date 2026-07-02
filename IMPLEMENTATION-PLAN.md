@@ -2508,6 +2508,18 @@ git commit -m "feat(ai): add Claude fix generation with mobile-specific prompts"
 
 ---
 
+> **M9.D — AI Pipeline: Orchestrator** (Task 9.7) — IN PROGRESS at Stage 3 C0 ADR-033 landing this commit.
+>
+> Stage 1 design doc (compressed; absorbs Stage 2 per Q5): `plans/2026-07-02-m9d-orchestrator-design.md` (commit `988326e`) — 8 locks (Gate-1 gap-closure + Gate-2 throttle-pin-honored + Q1-Q6).
+> Stage 3 C0 ADR-033 SPEC §13 canonical: this commit.
+> Stage 3 C1 ai_pipeline_consumer.py wiring: forthcoming.
+> Stage 3 C2 e2e smoke: forthcoming.
+> Stage 4 P5.A: forthcoming (Task 9.7 CLOSED-by-composition annotation at P5.A).
+>
+> V-AA established the orchestration chain OPERATIONAL since M9.0 C2 / Task 4.2; the Task 9.7 run_ai_pipeline pseudo-code is superseded per the INFORMATIONAL-not-BINDING header; M9.D = gap-closure (completed_at/error_message wiring + e2e) + ADR-033 closure-by-composition.
+
+---
+
 ### Task 9.7: Full AI pipeline orchestrator
 
 **Files:**
