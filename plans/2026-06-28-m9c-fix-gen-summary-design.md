@@ -1,6 +1,6 @@
 # M9.C AI Pipeline: Fix Generation + Executive Summary — Stage 1 Design Doc
 
-**Status:** Stage 1 design ratified; Stage 2 plan + Stage 3 implementation forthcoming.
+**Status:** CLOSED at M9.C Stage 3 + P5.A lifecycle closure (2026-07-02). ADR-032 canonical at SPEC §13 (`e8fbd8c`); Path A operational across api C1 (`a0522a1`; fix_generation.py + summary.py NEW + pipeline.run() extension; 4 V-BB averted-prediction catches + 1 test-gate-within-lock narrowing) + C2 (`6eff189`; 36 tests, suite 747 ZERO regressions; V-CCF averted-prediction catch); Stage 2 plan `f86a7b0`; P5.A Commit 1 docs this commit + Commits 2 (api DRIFT-LOG) + 3 (engine DRIFT-LOG) forthcoming. Cumulative drift count preserved at 66. Original brainstorming-chain content (2 gate-decisions + Q1-Q16 + V-AB §9 pre-grounding) preserved below as historical authority.
 
 **Date:** 2026-06-28.
 

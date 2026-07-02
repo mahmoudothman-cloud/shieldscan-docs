@@ -2397,20 +2397,26 @@ git commit -m "feat(ai): add DAST-SAST cross-layer correlation with weighted sco
 
 ---
 
-> **M9.C — AI Pipeline: Fix Generation + Executive Summary** (Tasks 9.5+9.6) — IN PROGRESS at Stage 3 C0 ADR-032 landing this commit.
+> **🔒 M9.C — AI Pipeline: Fix Generation + Executive Summary** (Tasks 9.5+9.6) — **CLOSED at Stage 3 + P5.A lifecycle closure (2026-07-02).**
 >
 > Stage 1 design doc: `plans/2026-06-28-m9c-fix-gen-summary-design.md` (commit `261cf10`) — 18 architectural locks (2 gate-decisions + Q1-Q16) via Mode 1 brainstorming chain.
 > Stage 2 implementation plan: `plans/2026-06-28-m9c-fix-gen-summary-implementation.md` (commit `f86a7b0`) — PY1-PY8 plan-level Y-decisions + 3-commit Stage 3 sub-step breakdown + V-BB+V-CC pre-verification cascade design.
-> Stage 3 C0 ADR-032 SPEC §13 canonical: this commit.
-> Stage 3 C1 api modules + integration: forthcoming.
-> Stage 3 C2 api tests + smoke: forthcoming.
-> Stage 4 P5.A annotations: forthcoming (Tasks 9.5+9.6 Status field CLOSED annotations at P5.A per M9.B P5.A `42259cf` precedent).
+> Stage 3 C0 ADR-032 SPEC §13 canonical: `e8fbd8c`.
+> Stage 3 C1 api modules + integration: `a0522a1` (fix_generation.py + summary.py NEW + pipeline.run() sequential extension; 4 V-BB averted-prediction catches + 1 test-gate-within-lock narrowing).
+> Stage 3 C2 api tests + smoke: `6eff189` (36 new tests; 747 total ZERO regressions; V-CCF averted-prediction catch).
+> Stage 4 P5.A Commit 1 docs annotations: this commit. P5.A Commit 2 api DRIFT-LOG + Commit 3 engine DRIFT-LOG: forthcoming.
 >
-> M9.C is THIRD real-AI sub-milestone + FIRST making real Anthropic Claude API calls; activates ai_api_calls cost-tracking infrastructure scaffolded since M9.0 per CLAUDE.md Gotcha 5 mandate.
+> ADR-032 architectural authority operational: Path A per-vuln Claude Sonnet calls; sequential pipeline.run() extension after M9.B scoring; per-vuln check_budget + 3-attempt retry + _fallback_fix_template + threshold-based ai_pipeline_degraded (≥3 OR ≥30%); deterministic fallback summary. M9.C is THIRD real-AI sub-milestone + FIRST making real Anthropic Claude API calls; cost-tracking transitions from architectural-readiness to operational-load per CLAUDE.md Gotcha 5 mandate.
+>
+> **Drift catalog at M9.C lifecycle: none** — cumulative count **preserved at 66**. 7-instance averted-prediction lineage operational (V-BB 4-catch at C1 + V-CCF at C2 extended 6→7); 3-instance test-gate-within-lock pattern operational (M9.B C2 + M9.B C3 + M9.C C1 test-assertion narrowing per Option A; none catalogue increments).
+>
+> **M9.D activation trigger:** ***"Begin M9.D — Pipeline Orchestrator"*** (Task 9.7; per Q11-M9.0 strict linear sequencing).
 
 ---
 
 ### Task 9.5: Claude fix generation with mobile context
+
+> **🔒 CLOSED at M9.C Stage 3 C1 (api `a0522a1`); tests at C2 (`6eff189`); ADR-032 Path A per-vuln Claude Sonnet operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-032). Real implementation: `fix_generation.py` NEW (FIX_GEN_SYSTEM_PROMPT + FIX_GEN_USER_PROMPT_TEMPLATE + `_build_target_context` mobile/sast/dast/generic dispatch per Q1/Q3 + `_format_evidence` + `_fallback_fix_template` per Q4 + `_call_claude_with_retry` 3-attempt exp backoff per Q8 + `generate_fix` per-vuln orchestrator with check_budget + log_ai_call per Q5 + `_generate_fixes` scan-level orchestrator per Q6/Q7/Q8 B.b) wired into `pipeline.run()` per Q13; no migration per V-AAH (ai_fix_text scaffolded at M9.0 C1). Tests: `tests/services/ai/test_fix_generation.py`.
 
 **Files:**
 - Create: `src/app/services/ai/fix_generation.py`
@@ -2489,6 +2495,8 @@ git commit -m "feat(ai): add Claude fix generation with mobile-specific prompts"
 ---
 
 ### Task 9.6: Executive summary generation
+
+> **🔒 CLOSED at M9.C Stage 3 C1 (api `a0522a1`); tests at C2 (`6eff189`); ADR-032 single-call Claude Sonnet summary operational.** The plan-literal pseudo-code below is INFORMATIONAL (superseded by ADR-032). Real implementation: `summary.py` NEW (SUMMARY_SYSTEM_PROMPT 4-section structure per Q9 + `_build_summary_user_prompt` severity-tiered input per Q10 + `_deterministic_fallback_summary` per Q11 C.c + `_generate_executive_summary` with Q12 A idempotency + Q13 C.b zero-vuln defensive + check_budget/log_ai_call per Q11) wired into `pipeline.run()` per Q13; no migration per V-AAI (executive_summary scaffolded at M9.0 C1). Tests: `tests/services/ai/test_summary.py` + `tests/integration/test_m9c_smoke.py`.
 
 **Files:**
 - Create: `src/app/services/ai/summary.py`
