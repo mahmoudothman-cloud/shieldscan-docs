@@ -2587,17 +2587,19 @@ git commit -m "feat(ai): add full pipeline orchestrator with error recovery"
 
 ## Milestone 10: Vulnerability & Report APIs (Week 6)
 
-> 🧭 **M10 — REPORT ARCHITECTURE — DECOMPOSED (2026-07-06; V-AA LARGE classification 2026-07-02 + DQ1-DQ5 mini-chain).** Sub-milestones + sequencing: **M10.A** Vulnerability Endpoints (Task 10.1; data layer ready: VulnerabilityStatus + VulnerabilityHistory operational) → **M10.B** Report Generation + Delivery (Tasks 10.2+10.3+10.4; ADR-034 reserved; WeasyPrint 62.3 + Jinja2 rendering stack locked by convergent authority — pinned dependency + plan + SPEC agree) → **M10.C** Compliance Mapping (Task 10.5; 2-table migration + SOC2/ISO-27001 seed) → **M10.D** Tool Health (Task 10.6; compressed shape). No M10.0 foundation needed (R2 + WeasyPrint + models + RLS + test harness all operational; contrast M9).
+> 🧭 **M10 — REPORT ARCHITECTURE — DECOMPOSED (2026-07-06; V-AA LARGE classification 2026-07-02 + DQ1-DQ5 mini-chain).** Sub-milestones + sequencing: **M10.A** Vulnerability Endpoints ✅ **CLOSED (2026-07-06;** chain `df68e69` + `5cc968a` + `0251ee7` + P5.A; all γ; no C0; first M10 sub-milestone**)** (Task 10.1; data layer ready: VulnerabilityStatus + VulnerabilityHistory operational — history table now WIRED at PATCH per Q5) → **M10.B** Report Generation + Delivery (Tasks 10.2+10.3+10.4; ADR-034 reserved; WeasyPrint 62.3 + Jinja2 rendering stack locked by convergent authority — pinned dependency + plan + SPEC agree) → **M10.C** Compliance Mapping (Task 10.5; 2-table migration + SOC2/ISO-27001 seed) → **M10.D** Tool Health (Task 10.6; compressed shape). No M10.0 foundation needed (R2 + WeasyPrint + models + RLS + test harness all operational; contrast M9).
 >
 > **Y-REPORT-PERSISTENCE (DQ3, pulled forward):** per-format split — PDF generated LAZILY at first download request, stored in R2 (365-day retention per SPEC data-retention canon), tracked via NEW reports table (M10.B migration); JSON + SARIF rendered on-demand from DB (no storage; trivially regenerable, no retention mandate). Eager-at-scan-completion PDF generation forward-pinned to production-readiness (would reopen the M9.D-closed consumer + waste renders at pre-launch volume; activate on first-download-latency complaints).
 >
 > **ADR allocation (DQ2):** this blockquote ratifies the decomposition (no dedicated decomposition ADR); ADR-034 "Report Architecture" allocated at M10.B entry; M10.A expected to need no new ADR (anchors: ADR-012 tenant-scoping + ADR-002 PostgreSQL); M10.C/M10.D ADR-need decided at their entries.
 >
-> **Triggers (DQ5), sequential:** ***"Begin M10.A — Vulnerability Endpoints"*** → ***"Begin M10.B — Report Generation + Delivery"*** → ***"Begin M10.C — Compliance Mapping"*** → ***"Begin M10.D — Tool Health"***.
+> **Triggers (DQ5), sequential:** ***"Begin M10.A — Vulnerability Endpoints"*** ✅ consumed → ***"Begin M10.B — Report Generation + Delivery"*** ⇐ **NEXT** → ***"Begin M10.C — Compliance Mapping"*** → ***"Begin M10.D — Tool Health"***.
 >
 > Cumulative drift count at decomposition: 66; 8-instance averted-prediction lineage operational.
 
 ### Task 10.1: Vulnerability endpoints
+
+> **🔒 Task 10.1 — CLOSED at M10.A (2026-07-06).** Landed as shieldscan-api `routes/vulnerabilities.py` + `schemas/vulnerabilities.py` + `services/audit.py` NEW VulnerabilityAction enum (per-domain discipline; 9th averted-prediction catch) + `tests/routes/test_vulnerabilities.py` (24 tests; suite 777 ZERO regressions). Scope: **full SPEC §6 7-endpoint canon** per the M10.A Q1 scope-delta resolution (per-scan list + org-wide list + detail + PATCH + /evidence + /fix + /history) — the 4-endpoint sketch, `data` envelope key, and `engine=nuclei` filter below are INFORMATIONAL, superseded by the lock-record (`items`+`pagination` envelope per Q3; **engine_category** filter per Q2; ai_fix_text EXCLUSIVE to /fix per Q7). PATCH is the FIRST write-site for the scaffolded VulnerabilityHistory table (Q5) + emits `vulnerability.status_changed` audit rows per actual transition (Q8; same-status = 200 no-op per Q4). Chain (all γ; **no C0** per Q10 — first C0-less sub-milestone): Stage 1 lock-record `df68e69` + C1 `5cc968a` + C2 `0251ee7` + P5.A this commit. Full lock-record: `plans/2026-07-06-m10a-vulnerability-endpoints-design.md`.
 
 **Files:**
 - Create: `src/app/routes/vulnerabilities.py`
