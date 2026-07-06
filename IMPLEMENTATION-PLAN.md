@@ -2587,6 +2587,16 @@ git commit -m "feat(ai): add full pipeline orchestrator with error recovery"
 
 ## Milestone 10: Vulnerability & Report APIs (Week 6)
 
+> 🧭 **M10 — REPORT ARCHITECTURE — DECOMPOSED (2026-07-06; V-AA LARGE classification 2026-07-02 + DQ1-DQ5 mini-chain).** Sub-milestones + sequencing: **M10.A** Vulnerability Endpoints (Task 10.1; data layer ready: VulnerabilityStatus + VulnerabilityHistory operational) → **M10.B** Report Generation + Delivery (Tasks 10.2+10.3+10.4; ADR-034 reserved; WeasyPrint 62.3 + Jinja2 rendering stack locked by convergent authority — pinned dependency + plan + SPEC agree) → **M10.C** Compliance Mapping (Task 10.5; 2-table migration + SOC2/ISO-27001 seed) → **M10.D** Tool Health (Task 10.6; compressed shape). No M10.0 foundation needed (R2 + WeasyPrint + models + RLS + test harness all operational; contrast M9).
+>
+> **Y-REPORT-PERSISTENCE (DQ3, pulled forward):** per-format split — PDF generated LAZILY at first download request, stored in R2 (365-day retention per SPEC data-retention canon), tracked via NEW reports table (M10.B migration); JSON + SARIF rendered on-demand from DB (no storage; trivially regenerable, no retention mandate). Eager-at-scan-completion PDF generation forward-pinned to production-readiness (would reopen the M9.D-closed consumer + waste renders at pre-launch volume; activate on first-download-latency complaints).
+>
+> **ADR allocation (DQ2):** this blockquote ratifies the decomposition (no dedicated decomposition ADR); ADR-034 "Report Architecture" allocated at M10.B entry; M10.A expected to need no new ADR (anchors: ADR-012 tenant-scoping + ADR-002 PostgreSQL); M10.C/M10.D ADR-need decided at their entries.
+>
+> **Triggers (DQ5), sequential:** ***"Begin M10.A — Vulnerability Endpoints"*** → ***"Begin M10.B — Report Generation + Delivery"*** → ***"Begin M10.C — Compliance Mapping"*** → ***"Begin M10.D — Tool Health"***.
+>
+> Cumulative drift count at decomposition: 66; 8-instance averted-prediction lineage operational.
+
 ### Task 10.1: Vulnerability endpoints
 
 **Files:**
