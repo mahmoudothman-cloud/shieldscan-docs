@@ -2633,6 +2633,14 @@ async def test_update_vulnerability_status(client, auth_headers, sample_vuln):
 
 ---
 
+> **M10.B — Report Generation + Delivery** (Tasks 10.2+10.3+10.4) — IN PROGRESS at Stage 3 C0 ADR-034 landing this commit.
+>
+> Stage 1 design: `plans/2026-07-08-m10b-report-generation-design.md` (`92fe1c7`) — 5 gates / 17 locks; shared ReportContext assembler; lazy per-format persistence per DQ3.
+>
+> Stage 3 C0 ADR-034 SPEC §13: this commit. C1 migration+model+jsonschema, C2 assembler+JSON+SARIF, C3 PDF+R2, C4 endpoints: forthcoming. Stage 4 P5.A forthcoming (Task 10.2/10.3/10.4 CLOSED annotations at P5.A).
+>
+> Rendering stack WeasyPrint+Jinja2 locked; reports-table migration parent `ecfed70e05e4`; `jsonschema` dependency escalation per Rule 4 (VERSIONS.md at C1). Tasks 10.2-10.4 Status UNTOUCHED at C0.
+
 ### Task 10.2: PDF report generation
 
 **Files:**

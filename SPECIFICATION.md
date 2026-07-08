@@ -2930,6 +2930,38 @@ M9.D is closure-by-composition + a hardening delta, NOT new orchestrator code:
 
 ---
 
+### ADR-034: Report Architecture (M10.B)
+
+**Status:** Accepted (2026-07-08, M10.B Stage 3 C0).
+
+**Related:** ADR-002 (PostgreSQL — reports table), ADR-013 (Python sole-writer for the reports rows) + ADR-013 Pre-Signed URL Addendum (R2 presigned-GET lineage reused for PDF delivery), ADR-012 (route-layer cross-tenant-404 collapse only — see Tenancy), ADR-029/030/031/032 (the M9 pipeline produces the report inputs), Tasks 10.2/10.3/10.4.
+
+**Context.** M10.B renders the M9 pipeline output — `Scan.executive_summary` + scored/correlated `Vulnerabilities` + per-vuln `ai_fix_text` — into customer-facing reports in three formats (PDF, SARIF, JSON) plus an executive view. The report surface is greenfield: no templates, no report service, no reports table. The rendering stack is locked by convergent authority — WeasyPrint 62.3 + Jinja2 (pinned in pyproject + named in the plan + present in the SPEC file-tree as `templates/report.html`). The R2 presigned-GET primitive established for the MobSF pre-signed-URL task (ADR-013 addendum) is reused for customer PDF delivery.
+
+**Decision.** A 5-gate architecture:
+
+- **G1 — Data model.** A shared `ReportContext` assembler is the format-neutral data seam: it gathers the Scan + severity-ordered Vulnerabilities + counts once and feeds all three format generators (PDF/JSON/SARIF), which are pure `ReportContext → bytes|dict` functions. A NEW `reports` table — `Report(Base, TimestampMixin, TenantMixin)` with `id`/`scan_id` FK/`format` enum/`r2_key`/`size_bytes`/`generated_at` — tracks persisted artifacts; the `format` enum is kept for forward-compat though only PDF is stored at MVP. `Scan.executive_summary` STAYS on Scan (SPEC §13 M9.0 ADR-029 flagged a possible `→ Report.summary_text` move; resolved here as **no-move** — the summary is eagerly pipeline-produced while reports are lazy, so coupling it to a lazy table is wrong).
+- **G2 — Generation + delivery.** Lazy per-format persistence: the PDF is generated-or-reused inside a report service method on first `/report/pdf`, stored in R2, its `reports` row written, and served as a **presigned-GET URL returned in a JSON body** (per the MobSF R2 lineage; 3600s customer expiry vs the 600s MobSF engine-fetch default). Idempotency is query-reports-first; a benign concurrent-render race (two simultaneous first-downloads) is accepted at pre-launch (a `(scan_id, format)` unique-constraint is forward-pinned). JSON and SARIF are rendered on-demand from the DB and NEVER stored (trivially regenerable; no retention mandate).
+- **G3 — Formats + dependencies.** SARIF **2.1.0** (OASIS + the Task-12 GitHub Code Scanning requirement), validated via `jsonschema` against a bundled 2.1.0 schema for provable conformance — a NEW runtime dependency, escalated per Rule 4 (VERSIONS.md entry added at C1). The JSON report is a versioned full-fidelity envelope reusing the M10.A schemas, `ai_fix_text` inline, no pagination (a report is the whole scan).
+- **G4 — Endpoints + tier.** The five SPEC §6 endpoints: base `/report` = manifest (reuses the reports-table query; resolves the SPEC-5-vs-plan-4 scope-delta in canon's favor) + `/report/pdf` + `/report/sarif` + `/report/json` + `/report/executive`. All ship ungated with tier-enforcement forward-pinned to the billing milestone (M10.A /fix precedent); white-label is deferred to an Enterprise feature. Reports exist only for terminal-with-results scans (COMPLETED/PARTIAL); non-terminal → 409.
+- **G5 — Template.** PDF sections: cover/branding → executive_summary → findings-overview (severity-count table) → per-vulnerability detail incl. `ai_fix_text` → evidence (condensed) → conditional mobile section. The PDF is the paid deliverable: access is tier-gated later, but fixes are NOT stripped from the content.
+
+**Tenancy (cited distinctly — mislabel-avoidance).** The `reports` table is a standard `TenantMixin` + RLS table per Gotcha 3, with the Python api as sole writer per ADR-013. ADR-012 governs ONLY the route-layer cross-tenant-404 collapse (as M10.A used it), NOT the table's row-scoping. These are distinct mechanisms and must not be conflated.
+
+**Consequences.** Tasks 10.2/10.3/10.4 land across a 5-commit Stage 3 (C0 this ADR → C1 migration+model+jsonschema → C2 assembler+JSON+SARIF → C3 PDF+R2 → C4 endpoints). First new migration since M9.B (parent `ecfed70e05e4`); first new runtime-dependency escalation (`jsonschema`); the PDF report is the customer-facing demo artifact over the M9 pipeline.
+
+#### Forward-pins
+
+- Eager-PDF-at-scan-completion → production-readiness (would reopen the M9.D-closed consumer + waste renders at pre-launch volume).
+- `(scan_id, format)` unique-constraint for the concurrent-render race → production-readiness.
+- Per-download-deadline presigned expiry tuning → production-readiness.
+- White-label report branding → Enterprise feature (SPEC §9 white-label Enterprise-only).
+- Report-endpoint tier-gating → billing milestone (M10.A /fix precedent).
+- Arabic-language reports → Phase 2.
+- SARIF → GitHub Code Scanning upload → Task 12 (integrations).
+
+---
+
 ## 14. Meta-Principles
 
 Meta-principles are reasoning frames that recur across architectural decisions. They are structurally distinct from ADRs (which are individual decisions; one-way doors) and from DEVELOPMENT-PATTERNS entries (which are concrete code patterns; tactical). Meta-principles are the *frame* a decision is made through — they shape *how* ADRs reason, not *what* ADRs decide.
