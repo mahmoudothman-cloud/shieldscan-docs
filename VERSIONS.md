@@ -77,6 +77,7 @@ dnspython = "^2.7"             # async DNS resolver for domain verification (M3 
 cryptography = "^43.0.0"
 weasyprint = "^62.3"
 jinja2 = "^3.1.4"
+jsonschema = "^4.26.0"         # SARIF 2.1.0 report conformance validation (M10.B G3; Rule-4 escalation; api commit ac91e62)
 httpx = "^0.28.0"
 email-validator = "^2.2.0"
 python-multipart = "^0.0.20"   # multipart form parsing for mobile APK/IPA upload (M3 Task 3.3)
