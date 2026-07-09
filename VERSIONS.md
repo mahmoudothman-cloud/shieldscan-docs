@@ -76,6 +76,7 @@ tldextract = "^5.1"            # PSL-aware root-domain extraction for projects (
 dnspython = "^2.7"             # async DNS resolver for domain verification (M3 Task 3.2)
 cryptography = "^43.0.0"
 weasyprint = "^62.3"
+pydyf = ">=0.10.0,<0.11"       # WeasyPrint 62.3 transitive; 62.3 declares pydyf>=0.10.0 with no ceiling — pin excludes 0.11+ which removed Object.transform (breaks 62.3 render); M10.B C3 9b2724e
 jinja2 = "^3.1.4"
 jsonschema = "^4.26.0"         # SARIF 2.1.0 report conformance validation (M10.B G3; Rule-4 escalation; api commit ac91e62)
 httpx = "^0.28.0"
