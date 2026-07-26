@@ -1,6 +1,6 @@
 # M10.B Report Generation + Delivery — Stage 1 Design (Mode-1 full)
 
-**Status:** Stage 1 ratified; Stage 3 **5-commit** implementation forthcoming — **NEXT SESSION per budget checkpoint**. ADR-034 "Report Architecture" forthcoming at Stage 3 C0. M10.B re-enters full-ADR territory after M10.A's C0-less shape (new data model + new dependency + new migration + lazy-generation mechanics = genuinely architectural).
+**Status:** 🔒 **CLOSED (2026-07-26)** — full M10.B lifecycle landed, all γ: Stage 1 this doc `92fe1c7` + C0 ADR-034 `f099a5c` + C1 `ac91e62` (reports table + model + jsonschema + bundled SARIF schema; RLS + TENANT_TABLES) + C1-docs `67f0676` (jsonschema VERSIONS.md) + C2 `c383b06` (ReportContext seam + JSON + SARIF generators) + C3 `9b2724e` (WeasyPrint PDF service + pydyf constraint fix) + C3-docs `a50898f` (pydyf VERSIONS.md) + C4 `0d7e5e5` (5 SPEC §6 endpoints). Stage 4 P5.A 3-commit chain (docs this commit; api DRIFT-LOG + engine cross-ref forthcoming). 66 cumulative drift preserved (0 catalogued drifts); 11-instance averted-prediction lineage; V-JJH resolved as not-needed (no ReportAction — all endpoints are GETs). The report pipeline is reachable end-to-end.
 
 **Date:** 2026-07-08.
 

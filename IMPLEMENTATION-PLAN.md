@@ -2587,13 +2587,13 @@ git commit -m "feat(ai): add full pipeline orchestrator with error recovery"
 
 ## Milestone 10: Vulnerability & Report APIs (Week 6)
 
-> 🧭 **M10 — REPORT ARCHITECTURE — DECOMPOSED (2026-07-06; V-AA LARGE classification 2026-07-02 + DQ1-DQ5 mini-chain).** Sub-milestones + sequencing: **M10.A** Vulnerability Endpoints ✅ **CLOSED (2026-07-06;** chain `df68e69` + `5cc968a` + `0251ee7` + P5.A; all γ; no C0; first M10 sub-milestone**)** (Task 10.1; data layer ready: VulnerabilityStatus + VulnerabilityHistory operational — history table now WIRED at PATCH per Q5) → **M10.B** Report Generation + Delivery (Tasks 10.2+10.3+10.4; ADR-034 reserved; WeasyPrint 62.3 + Jinja2 rendering stack locked by convergent authority — pinned dependency + plan + SPEC agree) → **M10.C** Compliance Mapping (Task 10.5; 2-table migration + SOC2/ISO-27001 seed) → **M10.D** Tool Health (Task 10.6; compressed shape). No M10.0 foundation needed (R2 + WeasyPrint + models + RLS + test harness all operational; contrast M9).
+> 🧭 **M10 — REPORT ARCHITECTURE — DECOMPOSED (2026-07-06; V-AA LARGE classification 2026-07-02 + DQ1-DQ5 mini-chain).** Sub-milestones + sequencing: **M10.A** Vulnerability Endpoints ✅ **CLOSED (2026-07-06;** chain `df68e69` + `5cc968a` + `0251ee7` + P5.A; all γ; no C0; first M10 sub-milestone**)** (Task 10.1; data layer ready: VulnerabilityStatus + VulnerabilityHistory operational — history table now WIRED at PATCH per Q5) → **M10.B** Report Generation + Delivery ✅ **CLOSED (2026-07-26;** chain `92fe1c7` + `f099a5c` + `ac91e62` + `c383b06` + `9b2724e` + `0d7e5e5` + docs micro-commits `67f0676` + `a50898f`; all γ; ADR-034; second M10 sub-milestone**)** (Tasks 10.2+10.3+10.4; report pipeline reachable end-to-end) → **M10.C** Compliance Mapping (Task 10.5; 2-table migration + SOC2/ISO-27001 seed) → **M10.D** Tool Health (Task 10.6; compressed shape). No M10.0 foundation needed (R2 + WeasyPrint + models + RLS + test harness all operational; contrast M9).
 >
 > **Y-REPORT-PERSISTENCE (DQ3, pulled forward):** per-format split — PDF generated LAZILY at first download request, stored in R2 (365-day retention per SPEC data-retention canon), tracked via NEW reports table (M10.B migration); JSON + SARIF rendered on-demand from DB (no storage; trivially regenerable, no retention mandate). Eager-at-scan-completion PDF generation forward-pinned to production-readiness (would reopen the M9.D-closed consumer + waste renders at pre-launch volume; activate on first-download-latency complaints).
 >
 > **ADR allocation (DQ2):** this blockquote ratifies the decomposition (no dedicated decomposition ADR); ADR-034 "Report Architecture" allocated at M10.B entry; M10.A expected to need no new ADR (anchors: ADR-012 tenant-scoping + ADR-002 PostgreSQL); M10.C/M10.D ADR-need decided at their entries.
 >
-> **Triggers (DQ5), sequential:** ***"Begin M10.A — Vulnerability Endpoints"*** ✅ consumed → ***"Begin M10.B — Report Generation + Delivery"*** ⇐ **NEXT** → ***"Begin M10.C — Compliance Mapping"*** → ***"Begin M10.D — Tool Health"***.
+> **Triggers (DQ5), sequential:** ***"Begin M10.A — Vulnerability Endpoints"*** ✅ consumed → ***"Begin M10.B — Report Generation + Delivery"*** ✅ consumed → ***"Begin M10.C — Compliance Mapping"*** ⇐ **NEXT** → ***"Begin M10.D — Tool Health"***.
 >
 > Cumulative drift count at decomposition: 66; 8-instance averted-prediction lineage operational.
 
@@ -2633,15 +2633,15 @@ async def test_update_vulnerability_status(client, auth_headers, sample_vuln):
 
 ---
 
-> **M10.B — Report Generation + Delivery** (Tasks 10.2+10.3+10.4) — IN PROGRESS at Stage 3 C0 ADR-034 landing this commit.
+> **🔒 M10.B — Report Generation + Delivery** (Tasks 10.2+10.3+10.4) — **CLOSED (2026-07-26; second M10 sub-milestone).** The report pipeline is reachable end-to-end: scan → M9 analysis → ReportContext → PDF/JSON/SARIF/executive → customer download.
 >
-> Stage 1 design: `plans/2026-07-08-m10b-report-generation-design.md` (`92fe1c7`) — 5 gates / 17 locks; shared ReportContext assembler; lazy per-format persistence per DQ3.
+> Chain (all γ; 5 code + 2 docs micro-commits): Stage 1 design `92fe1c7` (Mode-1 full; 5 gates / 17 locks) + C0 ADR-034 `f099a5c` (SPEC §13; tenancy cited distinctly — reports table is standard TenantMixin+RLS per Gotcha 3, ADR-012 is route-layer-404 only) + C1 `ac91e62` (reports table + Report/ReportFormat + RLS migration parent `ecfed70e05e4` + TENANT_TABLES registration [10th averted-prediction: RLS reaches tests via the registry, not migrations] + jsonschema 4.26.0 + bundled SARIF 2.1.0 schema) + C1-docs `67f0676` (jsonschema VERSIONS.md) + C2 `c383b06` (ReportContext seam + JSON + SARIF generators; 11th averted-prediction: scan target lives on Project not Scan) + C3 `9b2724e` (WeasyPrint+Jinja2 PDF; lazy generate-or-reuse → R2 → reports-row; pydyf constraint fix) + C3-docs `a50898f` (pydyf VERSIONS.md) + C4 `0d7e5e5` (5 SPEC §6 endpoints; V-JJH resolved as not-needed — all GETs, and this codebase audits state changes not reads).
 >
-> Stage 3 C0 ADR-034 SPEC §13: this commit. C1 migration+model+jsonschema, C2 assembler+JSON+SARIF, C3 PDF+R2, C4 endpoints: forthcoming. Stage 4 P5.A forthcoming (Task 10.2/10.3/10.4 CLOSED annotations at P5.A).
->
-> Rendering stack WeasyPrint+Jinja2 locked; reports-table migration parent `ecfed70e05e4`; `jsonschema` dependency escalation per Rule 4 (VERSIONS.md at C1). Tasks 10.2-10.4 Status UNTOUCHED at C0.
+> Cumulative session-tail framing-drift count **66 preserved** (M10.B landed 0 catalogued drifts across all 7 commits); 11-instance averted-prediction lineage. Two dependency escalations (jsonschema + pydyf) both VERSIONS.md-locked in-session per Rule 4. Rendering stack WeasyPrint 62.3 + Jinja2 operational (first render path surfaced + fixed the latent pydyf incompatibility). api/engine DRIFT-LOG closure entries forthcoming (P5.A Commits 2/3).
 
 ### Task 10.2: PDF report generation
+
+> **🔒 Task 10.2 — CLOSED at M10.B C3 `9b2724e` (2026-07-19).** Landed as `services/reports/pdf.py` (`generate_or_get_pdf_report` — lazy generate-or-reuse → WeasyPrint render → R2 `put_object` → reports-row) + `services/reports/templates/report.html` + `report.css` (co-located per the C1 `schemas/` precedent, not the `src/app/templates/` sketch below) + `tests/services/reports/test_pdf.py`. G5 sections: cover → executive_summary → findings-overview → per-vuln detail incl. ai_fix_text → evidence → conditional mobile. Pins `pydyf >=0.10.0,<0.11` (WeasyPrint 62.3 declares `pydyf>=0.10.0` with no ceiling → poetry had resolved the API-breaking 0.12.1; latent since before M9). Full lock-record: `plans/2026-07-08-m10b-report-generation-design.md`.
 
 **Files:**
 - Create: `src/app/services/reports/pdf.py`
@@ -2662,6 +2662,8 @@ git commit -m "feat(reports): add WeasyPrint PDF generation with mobile sections
 
 ### Task 10.3: SARIF + JSON report generation
 
+> **🔒 Task 10.3 — CLOSED at M10.B C2 `c383b06` (2026-07-08).** Landed as `services/reports/context.py` (the G1 shared `ReportContext` assembler seam — gathers Scan + severity-ordered Vulnerabilities + evidence once, feeds all generators) + `services/reports/json_report.py` (versioned full-fidelity envelope; ai_fix_text inline; no pagination) + `services/reports/sarif.py` (SARIF **2.1.0**, self-validated via `jsonschema` against the bundled schema — provable conformance) + `tests/services/reports/*`. JSON/SARIF are on-demand pure DB→dict, never stored (DQ3).
+
 **Files:**
 - Create: `src/app/services/reports/sarif.py`
 - Create: `src/app/services/reports/json_report.py`
@@ -2673,6 +2675,8 @@ git commit -m "feat(reports): add WeasyPrint PDF generation with mobile sections
 ---
 
 ### Task 10.4: Report download endpoints
+
+> **🔒 Task 10.4 — CLOSED at M10.B C4 `0d7e5e5` (2026-07-19).** Landed as `routes/reports.py` (**5** SPEC §6 scan-scoped GETs) + `schemas/reports.py` + `tests/routes/test_reports.py`. **Scope-delta resolved in canon's favor:** SPEC §6 has **5** endpoints (base `/report` = manifest + pdf + sarif + json + executive) vs the 4-endpoint plan-literal below — the base `/report` manifest was added (G4-L12). `/pdf` returns a presigned-GET URL in JSON (3600s expiry); `/sarif` + `/json` inline; `/executive` reads `Scan.executive_summary`; 409 for non-terminal scans (COMPLETED/PARTIAL only); ADR-012 cross-tenant-404. All ungated (tier→billing). No audit rows — all GETs (V-JJH resolved: this codebase audits state changes, not reads).
 
 **Files:**
 - Create: `src/app/routes/reports.py`
