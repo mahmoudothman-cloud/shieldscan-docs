@@ -1,6 +1,6 @@
 # M10.C Compliance Mapping — Stage 1 Lock-Record (light Mode-2 compressed per DQ4)
 
-**Status:** Stage 1 locks ratified; Stage 3 **2-commit** implementation forthcoming. **NO C0** — no ADR (data-model + seed over existing patterns, like M10.A; ADR-034 was reserved for M10.B only). But unlike M10.A this **HAS a migration** (schema + a first-of-kind data/seed migration), so *C0-less ≠ migration-less* here. Third M10 sub-milestone.
+**Status:** 🔒 **CLOSED (2026-07-31)** — full M10.C lifecycle landed, all γ: Stage 1 this doc `bee52c6` + C1 `edea03a` (3 global models + seed migration `a7c3e9f04b21` + frameworks.py inline seed + `seed_compliance_data()` helper + not-in-TENANT_TABLES ∅ test) + C2 `40b8243` (three-state posture mapper + 3 org-scoped GETs; suite 828 ZERO regressions). Stage 4 P5.A 3-commit chain (docs this commit; api DRIFT-LOG + engine cross-ref forthcoming). **NO C0** — no ADR (data-model + seed over existing patterns, like M10.A; ADR-034 was reserved for M10.B only). But unlike M10.A this **HAD a migration** (schema + a first-of-kind data/seed migration), so *C0-less ≠ migration-less* here. Third M10 sub-milestone; 66 cumulative drift preserved (0 catalogued); compliance mapping reachable end-to-end.
 
 **Date:** 2026-07-27.
 
