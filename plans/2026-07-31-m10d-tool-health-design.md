@@ -1,6 +1,6 @@
 # M10.D Tool Health — Stage 1 Lock-Record (light Mode-2 compressed per DQ4)
 
-**Status:** Stage 1 locks ratified; Stage 3 **single-C1 forthcoming** (C1+C2 fallback if aggregation earns its own test surface); **NO C0 — no ADR, no migration, Redis-read-only.** The **FINAL M10 sub-milestone** — closing it closes M10 (Report Architecture) entirely. Fourth and last M10 sub-milestone; the leanest shape in the arc. 66 cumulative drift preserved (0 catalogued so far).
+**Status:** 🔒 **CLOSED (2026-07-31)** — full M10.D lifecycle landed, all γ: Stage 1 this doc `74f0688` (Mode-2 compressed; Gate-1 / 5 locks) + C1 `3d94c42` (the single implementation commit: `routes/tools.py` + `services/tool_health.py` + `tests/routes/test_tools.py`; `GET /orgs/{org_id}/tools/health`; two-state honest availability over the worker heartbeat fleet; suite 834 passed / 1 skipped, ZERO regressions). Stage 4 P5.A 3-commit chain (docs this commit; api DRIFT-LOG + engine cross-ref forthcoming). **NO C0** — no ADR, no migration, Redis-read-only over an existing signal (the leanest shape in the arc). Two C1 grounding findings: V-MMD drain-status NOT a live signal (ops-runbook-only; drain-awareness forward-pinned) + the 13th averted-prediction (cross-repo tool-name mismatch; known-set reused from `orchestrator.py` `SCAN_TYPE_TOOLS`; normalization forward-pinned). **The FINAL M10 sub-milestone — closing it closed M10 (Report Architecture) ENTIRELY (4 of 4); DQ5 exhausted.** 66 cumulative drift preserved (0 catalogued).
 
 **Date:** 2026-07-31.
 
