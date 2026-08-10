@@ -1041,10 +1041,33 @@ Generate a secure code fix following platform best practices (Android Security G
 | Attack chain analysis (Phase 2) | Claude Opus | Deep reasoning |
 | Chat/Q&A (future) | Claude Haiku | Fast + cheap |
 
-**Target AI cost per scan:**
+**Target AI cost per scan** (typical expected spend, small finding counts):
 - Quick scan: $0.08
 - Full web scan: $0.25
 - Full spectrum scan: $0.55
+
+**Per-scan AI budget caps** (enforcement ceilings in `SCAN_TYPE_BUDGETS_USD`,
+`app.services.ai.cost_tracking`; ADR-029 Q2). These are the circuit-breaker
+maxima, deliberately **above** the typical-spend targets so a high-finding-count
+scan is not starved. Raised from the original caps (which equalled the targets)
+at the live full_web bring-up (scan `a70e1711`, 26 findings): per-vuln fix spend
+had consumed the whole budget and the executive summary — which runs LAST —
+degraded to its deterministic fallback. The caps now cover embeddings + per-vuln
+fixes across dozens of findings + a reserved summary slice:
+
+| ScanType | Cap | ScanType | Cap |
+|---|---|---|---|
+| QUICK / PUBLIC | $0.15 | FULL_WEB | $0.75 |
+| API | $0.30 | FULL_WEB_SOURCE | $1.00 |
+| MOBILE | $0.20 | FULL_SPECTRUM | $1.50 |
+| CONTAINER | $0.15 | | |
+
+**Summary budget reservation.** `$0.05` of each scan's budget
+(`RESERVED_SUMMARY_BUDGET_USD`) is reserved for the executive summary:
+fix-generation gates against `cap − reserve`, the summary against the full cap,
+so a large number of fixes can never starve the summary. Small caps were raised
+alongside the big three so the reservation does not starve their fixes.
+Database-configurable per-org tiers remain a production-readiness forward-pin.
 
 ### 8.6 Error Recovery
 
