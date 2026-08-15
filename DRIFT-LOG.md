@@ -61,6 +61,36 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-08-15 — RLS enforced for the first time: a documented decision and the code diverged for four months
+
+**The drift.** `dbdccfd` (2026-04-21) enabled and FORCED row-level security on 13 tenant tables and provisioned a non-superuser `shieldscan_app` role. Its commit message states: *"The app connects / tests SET ROLE to this. Owner role `shieldscan` stays reserved for migrations and admin ops."* **The app half was never written.** The diff touched only `db/policies.py` and `db/__init__.py`; `git log -S "SET ROLE" -- src/` returns that commit, and the only line it adds to `src/` is a comment. The api kept connecting as `shieldscan` — a SUPERUSER with BYPASSRLS, which bypasses RLS unconditionally (FORCE does not override it), so every policy was inert in production for four months.
+
+**Why it survived.** The test fixture did `SET ROLE shieldscan_app`, so the suite exercised the enforced path and reported tenant isolation as verified while production took the bypassed one. Nothing in the codebase could contradict the commit message. **The defect was not a missing `SET ROLE` — it was the absence of anything able to detect its absence.** Cross-repo: the decision lived in shieldscan-docs (SPEC §13) and shieldscan-api code, and the divergence was invisible from either side alone.
+
+**What was NOT true.** No live cross-tenant leak. A sweep of every route found the application-layer `WHERE organization_id = ...` clauses complete, and there is one org in production. But it was a single layer where two were designed, and several internal services scope by `scan_id` alone with comments citing RLS as the backstop (`_load_project`: *"Defense-in-depth on top of RLS"*; `scans.py`: *"RLS-scoped via the org GUC"*). Those comments described a backstop that was not running.
+
+**Resolution.** ADR-035 (SPECIFICATION.md §13) records the five decisions and the evidence. In brief: connect **as** the app role rather than `SET ROLE` (which leaves pooled connections superuser and fails **open**); `NULLIF(current_setting('app.current_org_id', true), '')::uuid` as the predicate (the bare two-argument form still 500s, because clearing a touched GUC leaves `''` and `''::uuid` raises); pool reset ordering `ROLLBACK` **then** `RESET` (both are transactional, so a bare RESET is undone by the pool's own rollback); per-transaction re-apply from `session.info` through a single setter; and a tenant guard requiring intent AND applied AND match. Landed api `637f694` → `c36d841` → `51f7a5e` → `5a88d0f`; docs `c60cf35`.
+
+**Known silent path, deliberately left open.** ORM `session.delete(obj)` + flush with no tenant context matches zero rows, SQLAlchemy only warns, and flush+commit both succeed — the caller is told a delete happened that did not (no data loss, no cross-tenant effect). Reads are guarded, INSERT is caught by `WITH CHECK`, UPDATE by `StaleDataError`; DELETE is the one gap. Symptom to look for: **a delete endpoint returning success against a row that still exists.** Closing it needs a `before_flush` hook — pinned, not done.
+
+**Non-pin (deliberate).** RLS being enforced is NOT licence to drop the app-layer `WHERE organization_id` clauses. Both layers stay.
+
+---
+
+### 2026-08-15 — Process lesson: a pre-flight must run under the post-cutover configuration
+
+**Generalises beyond RLS.** The pre-flight for the RLS cutover — full suite green with sessions connected as the app role and the guard enabled — passed at 870 tests. The cutover then broke the suite immediately: `conftest` derived its DDL url from `DATABASE_URL`, so the moment that flipped to the non-superuser app role, `drop_all` failed with *must be owner of table*.
+
+**The reason is the whole lesson.** The pre-flight ran with `DATABASE_URL` still pointing at the owner, so **the one code path that differs only after the flip was never exercised**. The result was accurate but incomplete, and reporting it as full coverage was wrong.
+
+> **A pre-flight that validates a cutover must run under the post-cutover configuration, or it proves nothing about the paths that only differ after the flip.**
+
+Note the shape: a check that passes because it never takes production's path — identical to the defect the cutover was remediating, and the sixth instance of that shape in one week (alongside the `finding_count` bug, the buildargs bug, and `dbdccfd` itself). When a change alters configuration, the validation must be run under the *new* configuration, not the old one; if that is impossible before the flip, say so explicitly rather than presenting the pre-flight as complete.
+
+Fixed api `5a88d0f` (derive the DDL url from `MIGRATION_DATABASE_URL`, correct in both directions). Also recorded in ADR-035.
+
+---
+
 ### 2026-04-20 — `continuous_clean_days` uses ORM default only
 
 `Organization.continuous_clean_days` has a SQLAlchemy `default=0` (applied by the ORM on INSERT) but **no** PostgreSQL `server_default`. All inserts go through SQLAlchemy today. If raw SQL inserts become a pattern (data migrations, admin scripts, direct DB writes from another service), revisit and add `server_default=text("0")` to avoid a `NOT NULL violation`.
