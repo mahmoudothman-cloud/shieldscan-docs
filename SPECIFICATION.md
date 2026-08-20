@@ -773,6 +773,27 @@ For mobile jobs:
 }
 ```
 
+**Checkout is non-destructive (2026-08-20 Addendum — engine Drift #70).** A worker does not pop a job; it *moves* it:
+
+```
+LMOVE shieldscan:queue:{priority} shieldscan:processing:{worker_id}:{priority} RIGHT LEFT
+```
+
+`shieldscan:processing:{worker_id}:{priority}` is the worker's in-flight list. The payload stays there, byte-for-byte, for as long as the job is being worked on, and is removed by value (`LREM … 1 <payload>`) once a terminal completion event for the job has been published.
+
+The list is per worker so that recovery can be scoped by liveness, and per priority so that a recovered job can be returned to the queue it came from — the payload carries no priority field.
+
+**Why this is a contract and not an implementation detail:** while a job is in flight, `shieldscan:processing:*` is the only place its payload exists. Anything that reasons about whether a job is really lost MUST consult it — a job absent from `shieldscan:queue:*` but present here is running, not stranded. The Python-side ghost test (`app.services.stranded_jobs`) reads both.
+
+**Recovery.** A worker whose heartbeat key (`shieldscan:workers:{id}`, 60s TTL) has expired is treated as dead, and its in-flight list is swept by any live worker. Each job is either requeued (`RPUSH`, to the head of the line) or reported failed via a synthetic `job_completed` event — never both, and at most one requeue per job. Bookkeeping keys, both 24h TTL to match §7.5:
+
+| Key | Meaning |
+|---|---|
+| `shieldscan:published:{idempotency_key}` | at least one completion event for this job reached Redis. Set *before* the first publish. A job carrying this marker is never retried — it may already have written findings (ADR-017 sequencing), and a retry would duplicate them. |
+| `shieldscan:reclaims:{idempotency_key}` | how many times this job has been recovered. Above 1, the sweep reports it failed instead of requeueing. |
+
+Recovery publishes events; it never writes to PostgreSQL. ADR-013 holds.
+
 ### 7.2 Progress Events (Go → Redis Streams → Python → SSE)
 
 Stream: `shieldscan:progress:{scan_id}` (Redis Streams, not Pub/Sub — see ADR-014).
@@ -890,7 +911,13 @@ Go worker subscribes to this channel per-scan and calls `ctx.Cancel()` on receip
 
 ### 7.5 Job Idempotency
 
-Every job has an `idempotency_key` format `{scan_id}:{engine}:{unix_timestamp}`. Redis stores this key with 24h TTL. Workers check before processing — duplicates are silently dropped. Safe to retry or replay.
+Every job has an `idempotency_key` format `{scan_id}:{engine}:{unix_timestamp}`. Redis stores this key (`shieldscan:idem:{idempotency_key}`) with 24h TTL. Workers check before processing — duplicates are silently dropped. Safe to retry or replay.
+
+**The claim is released on recovery, never re-minted (2026-08-20 Addendum — engine Drift #70).** The claim is taken *before* processing and is not released on the normal path, so it outlives the worker that took it. A job whose worker died therefore cannot be retried while its claim stands: the requeued payload would be popped and dropped as a duplicate — the same job lost a second time, silently. The recovery sweep `DEL`s the key before requeueing.
+
+The alternative — minting a fresh `idempotency_key` for the retry — is rejected. The key is a cross-repo identifier and a UNIQUE column on `scan_jobs`; changing it changes this contract and breaks duplicate suppression for everything else keyed on it. Releasing is local to the recovery path and leaves the key meaning what it says.
+
+Releasing does not reopen a duplicate-delivery window. A duplicate dispatch is dropped at checkout time by whichever claimer won and is removed from the processing list as it goes, and the recovery sweep de-duplicates by `idempotency_key` so two payloads for one job in a dead worker's list are acted on once.
 
 ### 7.6 AttackSurface Event (Go → Redis Pub/Sub → Python) (2026-05-30 Addendum)
 
@@ -1416,6 +1443,8 @@ Concretely:
 **Consequences:**
 - One codepath per state transition. Eliminates concurrent-update races between services.
 - Worker outage = events lag, jobs stay `queued`/`running` until events resume. No DB drift, no inconsistent partial-update state.
+  - **Correction (2026-08-20, engine Drift #70).** "Until events resume" was false as written, and stayed false for four months. A worker that *stopped* resumes; a worker that *died* does not, and until the reliable-queue hand-off landed there was nothing left to resume from. Checkout was a destructive `BRPOP`, so the instant a job was taken the only copy of its payload was in that worker's memory. A kill, a panic, or an unhandled signal destroyed it. No event was ever emitted for that job, and since this ADR makes Python the sole writer, no event meant no write — the row stayed `queued` forever, its parent scan could never aggregate, and the findings its sibling jobs had already produced were never analysed. Fifteen jobs across twelve scans were lost this way, taking 1,422 raw findings out of the pipeline. Describing a state as recoverable when nothing can recover it is the defect, not the wording: it is what let the gap sit unexamined.
+  - The clause is now true. Workers check jobs out into a per-worker processing list (§7.1) and a sweep recovers the list of any worker whose heartbeat has expired, either requeueing the job or publishing the terminal `failed` event its worker never sent. Recovery still emits events and never writes to PostgreSQL, so the single-writer discipline below is unchanged.
 - Go workers don't need PostgreSQL credentials in their config (M5 task 5.6 — see cross-references). One less attack surface.
 - Python becomes the bottleneck for state transitions — but at MVP scale this is fine; the completions consumer is a single async task processing one event at a time, which keeps ordering simple.
 - Python is the source of truth for "what state is this scan in?" — Redis is signaling, PostgreSQL is state.
@@ -1424,6 +1453,7 @@ Concretely:
 - **Go workers writing partial-completion state to PG to "help" Python aggregate.** Workers send events; Python interprets. Even if a Go engineer is convinced the round-trip is "wasteful," the single-writer discipline is what makes the design tractable.
 - **Python re-fetching scan state from Redis as a "cache" before PG.** PG is truth; Redis is signaling. Reading state from Redis in Python is a category error.
 - **Periodic reconciliation jobs that "verify Redis matches PG."** No reconciliation needed — state lives in one place. If you find yourself writing one, the design has been violated upstream.
+  - **Scope note (2026-08-20).** Two things added by Drift #70 are near this line and are not it. The engine's recovery sweep reads only Redis — a dead worker's in-flight list — and emits events; it never reads PostgreSQL, so there is nothing to reconcile. The Python backfill (`app.services.stranded_jobs`) *does* compare the two, and is deliberately one-shot recovery for jobs stranded before the fix, not a standing reconciler. Should it ever acquire a schedule, this anti-pattern applies to it and the right response is to find out why jobs are still being stranded.
 
 **Alternatives considered and rejected:**
 - **Dual writers (Python + Go).** Would require cross-service distributed locking (advisory locks, Redlock) on every state-bearing column. Concurrency complexity not justified by performance gain at MVP scale.

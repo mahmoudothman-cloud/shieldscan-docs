@@ -587,6 +587,35 @@ redis-cli -h production-redis.shieldscan.io DEL worker:worker-id-xxx
 # 5. Decommission server
 ```
 
+### 4.5 In-Flight Jobs and Stranded-Job Recovery (2026-08-20 — engine Drift #70)
+
+A worker holds each job it is working on in `shieldscan:processing:{worker_id}:{priority}` for the whole run, and removes it only once a terminal completion event has been published. This is the authoritative answer to "what is this worker actually doing right now":
+
+```bash
+redis-cli --scan --pattern 'shieldscan:processing:*' | while read k; do echo "$k -> $(redis-cli LLEN "$k")"; done
+```
+
+An entry belonging to a worker with no live heartbeat key (`shieldscan:workers:{id}`, 60s TTL) is recovered automatically: every running worker sweeps on startup and then every 60s, requeueing the job or publishing a `failed` completion for it. Nothing to do by hand.
+
+```bash
+# Who is alive right now
+redis-cli --scan --pattern 'shieldscan:workers:*'
+
+# What the sweep did (worker log)
+journalctl -u shieldscan-worker | grep 'job reclaim'
+```
+
+**Jobs stranded before this shipped** have no processing-list entry — their payload was destroyed at checkout — so they need the one-shot backfill. It is dry-run by default and safe to run twice:
+
+```bash
+python scripts/backfill_stranded_jobs.py            # report only
+python scripts/backfill_stranded_jobs.py --apply    # mark them failed
+```
+
+It marks each stranded job `failed` with a distinct `error_message` (`stranded: …`), which releases the parent scan to aggregate and, where the scan has raw findings, to enter the AI pipeline. It never re-dispatches: re-running a scan is the customer's call.
+
+A job is only touched if it is non-terminal in PostgreSQL **and** its payload is absent from every queue and every processing list. A job sitting in a queue, or being run right now, is never selected.
+
 ---
 
 ## 5. Deployment Procedures
