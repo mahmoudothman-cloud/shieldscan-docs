@@ -182,38 +182,67 @@ require (
 
 ### 2.5 Security Scanning Tools (the 19)
 
+**Corrected 2026-08-20 against the running deployment.** The versions below
+were read off the host that was actually serving scans, and the container
+references off the Go constants the worker actually pulls. The previous table
+had drifted on four of eleven binaries and four of five images — enough that a
+rebuild following it would have installed nuclei four minor versions back and
+produced different findings for the same target. See REBUILD-RUNBOOK.md §3.2
+and §3.3, which record the same facts with their provenance.
+
 **Layer 1 — Native binaries:**
 
 | Tool | Pinned Version | Installation Command | Notes |
 |---|---|---|---|
-| **Nuclei** | **v3.7.1** | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.7.1` | v3.7.1 released March 5, 2026, latest stable |
-| **Semgrep** | **1.95.0** | `pip install semgrep==1.95.0` | Install via pip for Python runtime integration |
-| **Subfinder** | **v2.6.7** | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.7` | Check releases page for latest at install |
-| **httpx** | **v1.6.10** | `go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.10` | |
-| **Gitleaks** | **v8.21.2** | `go install github.com/gitleaks/gitleaks/v8@v8.21.2` | |
-| **SSLyze** | **6.1.0** | `pip install sslyze==6.1.0` | |
-| **Nikto** | **2.5.0** | `apt install nikto` | OS package — version varies by Ubuntu |
-| **Wapiti** | **3.2.4** | `pip install wapiti3==3.2.4` | |
-| **CORStest** | git HEAD | `git clone https://github.com/RUB-NDS/CORStest.git` | Pin to specific commit SHA |
-| **OWASP Dep-Check** | **9.2.0** | Download from `github.com/jeremylong/DependencyCheck/releases` | |
-| **Checkov** | **3.2.340** | `pip install checkov==3.2.340` | |
+| **Nuclei** | **v3.11.0** | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.11.0` | was pinned v3.7.1; corrected 2026-08-20 to the running version |
+| **Semgrep** | **1.95.0** | `pipx install semgrep==1.95.0` | |
+| **Subfinder** | **v2.14.0** | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.14.0` | was pinned v2.6.7; corrected 2026-08-20 |
+| **httpx** | **v1.10.0** | `go install github.com/projectdiscovery/httpx/cmd/httpx@v1.10.0` | was pinned v1.6.10; corrected 2026-08-20 |
+| **Gitleaks** | **v8.30.1** | `go install github.com/gitleaks/gitleaks/v8@v8.30.1` | was pinned v8.21.2; corrected 2026-08-20 |
+| **SSLyze** | **6.1.0** | `pipx install sslyze==6.1.0` | |
+| **Nikto** | apt (Ubuntu 24.04.4) | `apt install nikto` | OS package — **not pinnable**; the version tracks the Ubuntu release, so a different base image gives a different nikto |
+| **Wapiti** | **3.2.4** | `pipx install wapiti3==3.2.4` | |
+| **CORStest** | git HEAD | `git clone https://github.com/RUB-NDS/CORStest.git` | **not pinned in practice** — a single script with no release tags; the deployment has whatever HEAD was on 2026-08-01 |
+| **OWASP Dep-Check** | **10.0.4** | Release archive from `github.com/jeremylong/DependencyCheck/releases` | was pinned 9.2.0; corrected 2026-08-20. Needs a JDK and `DEPCHECK_NVD_API_KEY`; **the deployment has neither an NVD data directory nor the key**, so it has almost certainly never produced a real finding |
+| **Checkov** | **3.2.340** | `pipx install checkov==3.2.340` | |
+
+Four of these are installed via `pipx`, not `pip` — corrected here because
+`pip install` into the system interpreter is not what the host does and would
+collide with the Python 3.13 the API requires.
 
 **Layer 2 — Persistent Docker services:**
 
-| Service | Pinned Image | Notes |
+**These are not compose services.** The heading is a leftover: MobSF and ZAP
+were removed from `deploy/docker-compose.services.yml` at Tasks 7.4 and 7.3 and
+every tool below is now spun up per scan from a Go constant. That compose file
+survives for local dev and CI only, and its own Trivy tag (0.58.0) is stale —
+the production path never reads it.
+
+**The Go constants are the authority, and they already carry digests.** Nothing
+here needs pinning by hand; the table exists so the pin is reviewable.
+
+| Service | Image the worker pulls | Source of truth |
 |---|---|---|
-| **MobSF** | `opensecurity/mobile-security-framework-mobsf:v4.4.6` | v4.4.6 (March 2026) patched an SQL injection vulnerability in the SQLite DB viewer component — use v4.4.6 or newer, **never use :latest in production** |
-| **ZAP** | `zaproxy/zap-stable:2.16.0` | Stable-track preferred over weekly |
-| **Trivy** | `aquasec/trivy:0.58.0` | Pin minor version |
-| **SQLMap** | `paoloo/sqlmap:1.9` | Community image; pin and verify before use |
-| **Nmap** | `instrumentisto/nmap:7.95` | |
+| **Nmap** | `instrumentisto/nmap:7.94@sha256:59e2c0bb…` | `internal/tools/docker/nmap/nmap.go:18` |
+| **Trivy** | `aquasec/trivy:0.70.0@sha256:be1190af…` | `internal/tools/docker/trivy/trivy.go:37` |
+| **SQLMap** | `parrotsec/sqlmap:latest@sha256:740197a8…` | `internal/tools/docker/sqlmap/sqlmap.go:23` |
+| **ZAP** | `ghcr.io/zaproxy/zaproxy@sha256:8770b23f…` | `internal/tools/docker/service/zap/zap.go:42` |
+| **MobSF** | `opensecurity/mobile-security-framework-mobsf@sha256:72311e35…` | `internal/tools/docker/service/mobsf/mobsf.go:19` |
 
-**CRITICAL:** In production, replace all `:tag` with `:tag@sha256:<digest>` to prevent image substitution attacks. Example:
-```yaml
-image: opensecurity/mobile-security-framework-mobsf:v4.4.6@sha256:abc123...
-```
+Corrected 2026-08-20. The previous table named `zaproxy/zap-stable:2.16.0`,
+`aquasec/trivy:0.58.0`, `paoloo/sqlmap:1.9` and `instrumentisto/nmap:7.95` —
+a different registry for ZAP, a different publisher for SQLMap, and versions
+that do not exist in the deployment.
 
-Get digests via: `docker inspect --format='{{index .RepoDigests 0}}' <image>`
+`parrotsec/sqlmap:latest` and the two bare-digest references are pinned by
+digest, which is what actually prevents substitution; the floating `:latest`
+tag alongside it is cosmetic. The MobSF advisory still stands: v4.4.6 (March
+2026) patched an SQL injection in the SQLite DB viewer, and the digest above
+must not be rolled back past it.
+
+**Rule:** a change to any of these five constants is a version-pin change and
+belongs in this table in the same commit. Get a digest via
+`docker inspect --format='{{index .RepoDigests 0}}' <image>`.
 
 ### 2.6 Frontend (shieldscan-web)
 
