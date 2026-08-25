@@ -65,7 +65,7 @@ pydantic = "^2.9.0"
 pydantic-settings = "^2.6.0"
 redis = "^5.2.0"
 qdrant-client = "^1.12.0"
-anthropic = "^0.40.0"
+anthropic = "^0.125.0"        # bumped from ^0.40.0 2026-08-20; see §4.4 note below
 openai = "^1.54.0"
 stripe = "^11.0.0"
 boto3 = "^1.35.0"
@@ -348,7 +348,7 @@ check_pypi() {
 check_pypi "fastapi" "0.135.0"
 check_pypi "sqlalchemy" "2.0.36"
 check_pypi "pydantic" "2.9.0"
-check_pypi "anthropic" "0.40.0"
+check_pypi "anthropic" "0.125.0"
 check_pypi "semgrep" "1.95.0"
 check_pypi "sslyze" "6.1.0"
 check_pypi "checkov" "3.2.340"
@@ -415,6 +415,19 @@ When verification shows newer versions available:
 - Patch (x.y.z → x.y.z+1): Auto-upgrade via Dependabot
 - Minor (x.y.z → x.y+1.0): Review changelog weekly, apply non-breaking
 - Major (x.y.z → x+1.0.0): Breaking change — plan migration
+
+**0.x libraries are the trap** (added 2026-08-20). Under SemVer a `0.x` minor
+bump MAY break, so the rule above gives no guidance and the safe-looking default
+is to defer. `anthropic` sat at `^0.40.0` for four months behind a DRIFT-LOG row
+reading "MAJOR SDK rewrite — breaking API changes expected", which was an
+inference from the version distance, not a reading of the changelog. It was
+wrong: 85 minor versions later the upgrade was entirely additive.
+
+For a `0.x` dependency, **read the changelog before classifying it**, and record
+what the changelog said rather than what the version numbers implied. Version
+distance is evidence of nothing. Deferring an SDK upgrade has its own cost — a
+pin that old could not express `thinking`, `output_config`, or the cache token
+fields, which meant a whole class of cost-tracking work was blocked on it.
 
 ### 4.5 For Frontend Libraries
 

@@ -17,7 +17,7 @@ Captured from `scripts/verify-versions.sh` run at project start. Re-run before e
 | fastapi | 0.135.0 | 0.136.0 | patch — caret range handles at `poetry install` | No action; verify at M11 |
 | sqlalchemy | 2.0.36 | 2.0.49 | patch — caret range handles | No action; verify at M11 |
 | pydantic | 2.9.0 | 2.13.3 | minor drift, 4 minor versions | **Review before M9** (AI pipeline uses pydantic schemas heavily) |
-| **anthropic** | 0.40.0 | 0.96.0 | **MAJOR SDK rewrite**, 56 minor versions | **Dedicated upgrade session required before M9** — breaking API changes expected |
+| ~~**anthropic**~~ | ~~0.40.0~~ → **0.125.0** | 0.125.0 | ~~**MAJOR SDK rewrite**, 56 minor versions~~ — **the hazard was not real** | **RESOLVED 2026-08-20.** Bumped 0.40.0 → 0.125.0 (85 minor versions). The upstream changelog carries **no BREAKING CHANGE entries** across that range, and the bump was entirely additive for this codebase: `Message` gained `container` + `stop_details`, `Usage` gained the cache/`server_tool_use`/`service_tier` fields, `messages.create` gained `thinking`/`output_config`/`cache_control`/`inference_geo`, and every pre-existing field, parameter and exception class survived unchanged. 913 tests green, live call verified. "Breaking API changes expected" was a guess recorded as a finding, and it deterred the upgrade for four months. |
 
 ### Security scanning tools (shieldscan-engine)
 
