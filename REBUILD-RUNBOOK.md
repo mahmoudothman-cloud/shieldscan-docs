@@ -89,6 +89,11 @@ tar czf ~/ss-backup/local-toolchain.tgz -C ~ \
 #    Then confirm PATH: ~/.local/bin must be on the PATH of whatever starts
 #    the worker, or buildRegistry fails and the worker exits 1.
 #
+#    ONE ABSOLUTE SYMLINK inside it:
+#      .local/bin/dependency-check.sh -> /home/mahmoud/.local/dependency-check/bin/…
+#    It only resolves if the new box's user is also `mahmoud`. If it isn't:
+#      ln -sf ~/.local/dependency-check/bin/dependency-check.sh ~/.local/bin/
+#
 #    pipx venvs (~644 MB, under ~/.local/share/pipx) are deliberately NOT in
 #    that tarball: all four are exact-version pins and reinstall cleanly.
 
