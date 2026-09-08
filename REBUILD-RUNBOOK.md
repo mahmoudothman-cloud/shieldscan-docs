@@ -129,7 +129,9 @@ this runbook does not exist on the new host.
 sudo apt update && sudo apt install -y \
   git curl tmux ufw ca-certificates \
   python3.13 python3.13-venv python3.13-dev \
-  nikto pipx
+  pipx nikto
+# NOTE: apt's nikto (2.1.5) is installed only as a fallback — it CANNOT
+# scan HTTPS. The worker points at a 2.5.0 built from source; see §3.2.
 
 # Docker (official repo)
 curl -fsSL https://get.docker.com | sudo sh
@@ -208,16 +210,49 @@ install -m 0755 /tmp/CORStest/corstest.py ~/.local/bin/corstest
 #   It only appears in FULL_WEB_SOURCE and FULL_SPECTRUM, so the §8.2 FULL_WEB
 #   check will not surface this. Fix it on the new box or accept it knowingly.
 
-# nikto comes from apt (/usr/bin/nikto) — version tracks the Ubuntu release,
-# so a different Ubuntu gives a different nikto. Old box: Ubuntu 24.04.4.
+# Nikto — FROM SOURCE, NOT apt. apt ships 2.1.5 (2015), which cannot
+# negotiate TLS at all: it speaks plain HTTP to port 443 and reports the
+# server's error page as findings (engine Drift #71). 2.5.0 works.
+git clone https://github.com/sullo/nikto /tmp/nikto-src
+git -C /tmp/nikto-src checkout 2.5.0
+cp -r /tmp/nikto-src/program ~/.local/nikto-2.5.0
+cd ~/.local/nikto-2.5.0 && cp nikto.conf.default nikto.conf && chmod +x nikto.pl
+#   Raise the error limit or a TLS scan gives up after ~19s having run a
+#   fraction of its checks (intermittent "ssl connect failed"):
+sed -i 's/^FAILURES=20$/FAILURES=200/' ~/.local/nikto-2.5.0/nikto.conf
+#   Then in shieldscan-engine/.env:
+#     SHIELDSCAN_NIKTO_BINARY=$HOME/.local/nikto-2.5.0/nikto.pl
+#     SHIELDSCAN_NIKTO_TLS_CAPABLE=1
+#   VERIFY before trusting it — see the note below.
+#
+# apt's nikto can stay installed; nothing points at it once
+# SHIELDSCAN_NIKTO_BINARY is set. Leaving it is the safer default: if
+# the env var is ever lost, the engine preflight refuses TLS targets
+# rather than silently scanning error pages again.
 
 nuclei -update-templates        # writes ~/nuclei-templates (83 MB)
 ```
+
+**Verify Nikto actually negotiated TLS** — this is the one check that
+distinguishes a working install from the one that ran here for months:
+
+```bash
+~/.local/nikto-2.5.0/nikto.pl -h https://<a-real-https-host>/ \
+  -Format xml -o /tmp/n.xml -ask no -nointeractive -maxtime 120s
+grep -o 'sitename="[^"]*"' /tmp/n.xml
+```
+
+It must read `sitename="https://host:443/"`. If it reads `http://host:443/`,
+Nikto never established TLS and every finding describes the server's
+"400 The plain HTTP request was sent to HTTPS port" page. There is no other
+signal: the scan completes, the count is non-zero, and the findings have
+titles.
 
 **Versions observed on the old box** (what was actually working):
 
 | Tool | Installed | VERSIONS.md §2.5 pin |
 |---|---|---|
+| nikto | **2.5.0 (source)** | apt 2.1.5 — **unusable for HTTPS** |
 | nuclei | **v3.11.0** | v3.7.1 |
 | subfinder | **v2.14.0** | v2.6.7 |
 | httpx | **v1.10.0** | v1.6.10 |

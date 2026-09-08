@@ -200,7 +200,7 @@ and §3.3, which record the same facts with their provenance.
 | **httpx** | **v1.10.0** | `go install github.com/projectdiscovery/httpx/cmd/httpx@v1.10.0` | was pinned v1.6.10; corrected 2026-08-20 |
 | **Gitleaks** | **v8.30.1** | `go install github.com/gitleaks/gitleaks/v8@v8.30.1` | was pinned v8.21.2; corrected 2026-08-20 |
 | **SSLyze** | **6.1.0** | `pipx install sslyze==6.1.0` | |
-| **Nikto** | apt (Ubuntu 24.04.4) | `apt install nikto` | OS package — **not pinnable**; the version tracks the Ubuntu release, so a different base image gives a different nikto |
+| **Nikto** | **2.5.0, FROM SOURCE** | `git clone https://github.com/sullo/nikto && git checkout 2.5.0` — copy `program/` to `~/.local/nikto-2.5.0`, `cp nikto.conf.default nikto.conf` | **Do NOT use apt.** apt ships 2.1.5 (2015), which cannot negotiate TLS at all and reports the server's plain-HTTP error page as findings (engine Drift #71). Point `SHIELDSCAN_NIKTO_BINARY` at `nikto.pl` in the unpacked tree. Two required config edits below. |
 | **Wapiti** | **3.2.4** | `pipx install wapiti3==3.2.4` | |
 | **CORStest** | git HEAD | `git clone https://github.com/RUB-NDS/CORStest.git` | **not pinned in practice** — a single script with no release tags; the deployment has whatever HEAD was on 2026-08-01 |
 | **OWASP Dep-Check** | **10.0.4** | Release archive from `github.com/jeremylong/DependencyCheck/releases` | was pinned 9.2.0; corrected 2026-08-20. Needs a JDK and `DEPCHECK_NVD_API_KEY`; **the deployment has neither an NVD data directory nor the key**, so it has almost certainly never produced a real finding |
@@ -209,6 +209,28 @@ and §3.3, which record the same facts with their provenance.
 Four of these are installed via `pipx`, not `pip` — corrected here because
 `pip install` into the system interpreter is not what the host does and would
 collide with the Python 3.13 the API requires.
+
+**Nikto 2.5.0 needs two things beyond unpacking (verified 2026-09-07):**
+
+1. **`FAILURES=200` in `nikto.conf`** (default 20). Against a TLS host the SSL
+   layer produces intermittent `ssl connect failed` errors; at the default the
+   scan gives up after ~19 seconds having run a fraction of its checks. Raised,
+   a full run completes: `itemstested=6951`, `elapsed=29`.
+2. **A URL target, not `host:port`.** Nikto never infers TLS from the port —
+   `-h host:443` is plain HTTP on 2.1.5 *and* 2.5.0. Only `-h https://host/`
+   negotiates TLS. The engine's `buildArgs` does this; it is recorded here
+   because it is a property of the tool, not of our code.
+
+**The tell that TLS actually happened** is the `sitename` attribute in the XML:
+it must read `https://host:443/`. If it reads `http://host:443/`, Nikto is
+scanning the error page and every finding is worthless. Check this after any
+Nikto install or upgrade — it is the only cheap signal, and its absence is what
+hid the defect for the life of the deployment.
+
+**Upstream is at 2.6.1** (2026-07-31). Not adopted: 2.6.x rewrote the XML report
+plugin around `XML::Writer` (a Perl module not installed here) and changed the
+document further, so it needs an engine parser change and fresh fixtures. Filed
+separately.
 
 **Layer 2 — Persistent Docker services:**
 
