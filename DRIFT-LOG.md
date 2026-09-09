@@ -61,6 +61,54 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-09-09 — Process lesson: verify through the integration, not the tool
+
+**Companion to the pre-flight lesson below (2026-08-15).** Same family, different axis: that one is about running the check under the wrong *configuration*; this one is about running it against the wrong *boundary*.
+
+**What happened.** The Nikto 2.1.5 → 2.5.0 upgrade (engine `cc1bfd8`) shipped with a verification step specified as *"verify TLS actually works"*. That check was performed and passed honestly: the XML `sitename` read `https://host:443/`, 6951 checks ran, and the findings named the reverse proxy and real paths rather than the plain-HTTP error page. Every one of those statements was true, and the upgrade was reported as verified.
+
+**It was completely broken.** Nikto 2.5.0 ends with `exit $is_failure`, and sets `$is_failure = 1` whenever `total_errors > 0 || total_vulns > 0` (`nikto.pl:189`) — it exits non-zero precisely when the scan *worked*. 2.1.5 ended in a bare `exit;` and always returned 0, which is why the runner carried `ExitCodeLenient: false` and why nothing existed that could notice. `NativeRunner` rejects a non-zero exit before the parser runs, so from the moment 2.5.0 went in, **the only Nikto scan that could reach the database was one that found nothing.** Measured on one target with identical flags: 2.1.5 → exit 0; 2.5.0 → exit 1 with 7932 requests, 158 items, 2 errors.
+
+**The reason is the whole lesson.** The verification exercised the *tool* — its output, by hand, read by eye. The defect lived in the *contract between the tool and the engine*, which is a surface the check never touched. Nikto's stdout was never the integration; its exit status was, and no one looked at `$?` even once. A check that stops at the tool boundary cannot detect anything about the caller, and upgrading a tool changes exactly that boundary.
+
+> **A verification of a tool upgrade must run the tool through the code that consumes it. Reading the tool's output proves the tool works; only driving the real runner proves the integration does.**
+
+**Note the failure shape.** It presents as flake, not as breakage: some scans succeed (the clean ones), most vanish, nothing errors in a way that names a cause. A tool that fails whenever it succeeds is invisible in aggregate and would have read as intermittent indefinitely. The same shape as the RLS entry below — a path that passes because it never takes production's path — now in its seventh instance.
+
+**Ownership, stated plainly.** The check was specified by the user and was too narrow; it was also executed as written and no further. Writing a narrow check and satisfying only the narrow check are two separate contributions to the same outcome, and the correction belongs to the process rather than to either party. The repair (engine `80ab2f0`) was verified by driving `NewNiktoRunner().Run()` against the real 2.5.0 binary and a live TLS host: 460s, `err=nil`, 11 findings — including `/.htpasswd`, which no previous run had ever reached.
+
+**How to apply.** For any tool upgrade: run one scan through the engine's own runner before declaring it verified, and state which boundary the check crossed. Where a live integration run is impractical, say so explicitly rather than presenting a tool-level check as complete — the same escape hatch the pre-flight lesson specifies.
+
+---
+
+### 2026-09-09 — Nikto's by-IP probes cannot succeed against a name-based vhost (not a defect to fix)
+
+Two Nikto plugins deliberately connect to the target **by IP**: `nikto_headers` (IIS internal-IP check, 18 URIs) and `nikto_sitefiles`, which tries every path twice, once with the `Host` header and once *"requested by IP address"*. LW2 derives the TLS SNI from the same field it connects to, so those probes present an IP literal as the server name, and any name-based vhost (Caddy, nginx `server_name`) answers with a TLS alert.
+
+Instrumented against a live host: 884 connects, 400 of them by IP, **all 400 failed**, 214 counted errors. Upstream `nikto.conf` ships `FAILURES=20`, so a TLS scan aborted 19 seconds in with 9 items. **~214 errors is a floor for a healthy target, not a symptom** — and not the server's: 300 bare handshakes and 400 TLS GETs to the same host from the same box gave zero failures.
+
+Pinned as **won't-fix at the tool level**: the with-`Host`-header half of `nikto_sitefiles` is real coverage, so the plugin cannot simply be dropped. The engine raises the limit instead, via `-Option FAILURES=1000` in `buildArgs` (engine `80ab2f0`). With it: 460s, 8266 requests, 12 items, including `/ftp/`, `/public/` and `/.htpasswd`.
+
+**Sub-lesson on where a fix lives.** This was first "fixed" by hand-editing `nikto.conf` on the deployed host — a setting no rebuild reproduces and no repo records, invisible to REBUILD-RUNBOOK §3.2. That edit has been reverted (`nikto.conf` is byte-identical to `nikto.conf.default` again) and replaced with a command-line argument. **A fix that lives only on one host is not a fix; it is undocumented state waiting for the next rebuild to delete it.**
+
+---
+
+### 2026-09-09 — ZAP: the pinned digest did not determine what ran, and failures deleted their own evidence
+
+**Three ZAP readiness failures (Aug 14, Aug 15, Sep 7) produced nothing diagnosable, twice dismissed as transient.** They were not. From the Docker journal: the container joined the bridge at 16:14:18 and containerd deleted its task at 16:14:52 — it **died 34 seconds into boot** — while the readiness probe polled the dead mapped port until 16:18:18 and reported a four-minute timeout naming `proxyconnect: connection refused`. Neither a spin-up race nor a port-publication race: the port was published and the process behind it exited.
+
+Three defects, all ours, all fixed in engine `68b4ff9`:
+
+1. **`waitForReady` was a pure HTTP poll** and could not distinguish "not listening yet" from "exited 90 seconds ago" — both are connection refused. `ContainerInspect` was already on the client interface, so the container-state check was free.
+2. **The failure path stopped and removed the container before reporting**, destroying the logs, exit code and `OOMKilled` flag of the container it was complaining about. This is why three occurrences left nothing to read, and why the *cause* of the exit remains a hypothesis rather than a finding.
+3. **Ephemeral service containers carried no labels at all.** `ReapOrphans` keys on `io.shieldscan.managed` and nothing else — never on image ancestry, deliberately — so an unlabelled container is unreapable *by construction*. The warm-pool path threads labels; the ephemeral path (ZAP, MobSF) never did, so one surviving a SIGKILL would sit on the host forever.
+
+**The reproducibility finding, independent of the crash.** The ZAP image is pinned by digest — and then every cold start reached the internet and installed ~30 add-ons over the top of it. The pinned image ships `ascanrules v82.0.0`; the auto-update was observed installing **v83.0.0** on top, on every scan, silently. **Two scans a week apart executed different scan rules and nothing we persist recorded which.** `zap.sh -silent` disables it; verified live with the exact argv the engine now builds: ready in 7s, zero downloads, against the pinned digest.
+
+Consequence accepted: add-on currency now requires a deliberate image bump. That is the intended trade — a pin that anything can override at runtime is not a pin.
+
+---
+
 ### 2026-08-15 — RLS enforced for the first time: a documented decision and the code diverged for four months
 
 **The drift.** `dbdccfd` (2026-04-21) enabled and FORCED row-level security on 13 tenant tables and provisioned a non-superuser `shieldscan_app` role. Its commit message states: *"The app connects / tests SET ROLE to this. Owner role `shieldscan` stays reserved for migrations and admin ops."* **The app half was never written.** The diff touched only `db/policies.py` and `db/__init__.py`; `git log -S "SET ROLE" -- src/` returns that commit, and the only line it adds to `src/` is a comment. The api kept connecting as `shieldscan` — a SUPERUSER with BYPASSRLS, which bypasses RLS unconditionally (FORCE does not override it), so every policy was inert in production for four months.
@@ -78,6 +126,8 @@ When addressing an entry:
 ---
 
 ### 2026-08-15 — Process lesson: a pre-flight must run under the post-cutover configuration
+
+**Companion: 2026-09-09, "verify through the integration, not the tool" (above).** Wrong boundary there, wrong configuration here; both are checks that pass without ever touching production's path.
 
 **Generalises beyond RLS.** The pre-flight for the RLS cutover — full suite green with sessions connected as the app role and the guard enabled — passed at 870 tests. The cutover then broke the suite immediately: `conftest` derived its DDL url from `DATABASE_URL`, so the moment that flipped to the non-superuser app role, `drop_all` failed with *must be owner of table*.
 
