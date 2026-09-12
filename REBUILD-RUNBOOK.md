@@ -217,9 +217,15 @@ git clone https://github.com/sullo/nikto /tmp/nikto-src
 git -C /tmp/nikto-src checkout 2.5.0
 cp -r /tmp/nikto-src/program ~/.local/nikto-2.5.0
 cd ~/.local/nikto-2.5.0 && cp nikto.conf.default nikto.conf && chmod +x nikto.pl
-#   Raise the error limit or a TLS scan gives up after ~19s having run a
-#   fraction of its checks (intermittent "ssl connect failed"):
-sed -i 's/^FAILURES=20$/FAILURES=200/' ~/.local/nikto-2.5.0/nikto.conf
+#   DO NOT EDIT nikto.conf. This step used to sed FAILURES=20 to 200,
+#   because a TLS scan otherwise gives up after ~19s having run a
+#   fraction of its checks ("ssl connect failed"). That was real, but
+#   the fix was in the wrong place: a value that exists only in this
+#   file on this host survives no rebuild, appears in no diff, and can
+#   be seen from no source tree. The engine now passes
+#   `-Option FAILURES=1000` on the command line instead
+#   (internal/tools/nikto/nikto.go), so an unmodified nikto.conf is the
+#   CORRECT state and a modified one is drift.
 #   Then in shieldscan-engine/.env:
 #     SHIELDSCAN_NIKTO_BINARY=$HOME/.local/nikto-2.5.0/nikto.pl
 #     SHIELDSCAN_NIKTO_TLS_CAPABLE=1
@@ -233,20 +239,80 @@ sed -i 's/^FAILURES=20$/FAILURES=200/' ~/.local/nikto-2.5.0/nikto.conf
 nuclei -update-templates        # writes ~/nuclei-templates (83 MB)
 ```
 
-**Verify Nikto actually negotiated TLS** — this is the one check that
-distinguishes a working install from the one that ran here for months:
+**Regenerate the tuning table** — Nikto's test categories are compiled
+into the engine, not read from the install, so a Nikto upgrade needs one
+command in the engine repo:
 
 ```bash
-~/.local/nikto-2.5.0/nikto.pl -h https://<a-real-https-host>/ \
-  -Format xml -o /tmp/n.xml -ask no -nointeractive -maxtime 120s
-grep -o 'sitename="[^"]*"' /tmp/n.xml
+cd ~/workspace/shieldscan-engine
+SHIELDSCAN_NIKTO_DB=$HOME/.local/nikto-2.5.0/databases/db_tests \
+SHIELDSCAN_NIKTO_VERSION=2.5.0 \
+  go generate ./internal/tools/nikto/
+go test ./internal/tools/nikto/      # the table's own forcing function
 ```
 
-It must read `sitename="https://host:443/"`. If it reads `http://host:443/`,
-Nikto never established TLS and every finding describes the server's
-"400 The plain HTTP request was sent to HTTPS port" page. There is no other
-signal: the scan completes, the count is non-zero, and the findings have
-titles.
+This rewrites `internal/tools/nikto/tuning_table.go` — ~6951 entries
+mapping each `db_tests` id to its category, which is what makes findings
+read `nikto-info-disclosure` rather than `nikto-002739`. It is committed
+to the repo on purpose (a runtime read of `db_tests` would make
+classification depend on the state of a file on one box — the same
+mistake as the `nikto.conf` edit above). The generator refuses to write
+a table if Nikto has added a category the engine does not name, so a
+failure here is a real signal, not a nuisance.
+
+**Verify Nikto through the ENGINE, not by hand.** The check that used to
+live here — run `nikto.pl` directly and grep the XML for
+`sitename="https://..."` — was passed by an install that could not
+produce a single usable finding, because Nikto 2.5.0 exits non-zero
+whenever it has something to report and the runner discarded the scan
+before parsing it. Reading the tool's output proves the tool works; only
+driving the runner proves the integration does. See the 2026-09-09
+process entry in DRIFT-LOG.md.
+
+```bash
+cd ~/workspace/shieldscan-engine
+cat > /tmp/nikto_live_test.go <<'EOF'
+package nikto
+
+import (
+	"testing"
+	"github.com/odyssey/shieldscan-engine/internal/tools"
+	"github.com/stretchr/testify/require"
+)
+
+func TestLIVE(t *testing.T) {
+	r := NewNiktoRunner(Config{
+		BinaryPath: "/root/.local/nikto-2.5.0/nikto.pl", // adjust to $HOME
+		TLSCapable: true,
+	}, noopLog())
+	f, err := r.Run(t.Context(),
+		tools.Target{URL: "https://<a-real-https-host>"}, tools.ScanConfig{})
+	require.NoError(t, err)
+	require.NotEmpty(t, f)
+	for _, x := range f {
+		t.Logf("%-34s %s", x.FindingType, x.TargetURL)
+	}
+}
+EOF
+cp /tmp/nikto_live_test.go internal/tools/nikto/live_tmp_test.go
+go test -count=1 -timeout 20m -run TestLIVE -v ./internal/tools/nikto/
+rm internal/tools/nikto/live_tmp_test.go
+```
+
+Three things must hold, and the first is the one the old check missed:
+
+1. **`err` is nil.** A non-zero exit from Nikto is normal (it means the
+   scan found something) and the runner is `ExitCodeLenient` for that
+   reason — but a parse failure still fails the job, so a nil error here
+   means the whole path works, not just the subprocess.
+2. **`TargetURL` reads `https://host:443/...`.** If it reads `http://`,
+   Nikto never established TLS and every finding describes the server's
+   "400 The plain HTTP request was sent to HTTPS port" page. There is no
+   other signal: the scan completes, the count is non-zero, and the
+   findings have titles.
+3. **No `FindingType` matches `nikto-<digits>`.** A raw numeric id means
+   the tuning table is stale relative to the installed Nikto —
+   regenerate it (above).
 
 **Versions observed on the old box** (what was actually working):
 
