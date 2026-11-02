@@ -61,6 +61,20 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-02 — `go mod tidy` made a no-op; httpmock and the AWS default-config chain dropped
+
+**What happened.** Found during the Go 1.26.10 pin (entry below): `go mod tidy` rewrote the engine's go.mod at HEAD. Every session that follows the engine checklist (`go mod tidy && go test -race ./...`) produced that diff, so the "clean baseline" step never was one.
+
+**httpmock was abandoned, not planned.** `git log -S httpmock` shows it was used: engine 4fa583c (Task 5.3) added `internal/tools/docker_service_test.go` with 24 httpmock tests. Engine 1306ca8 (Task 7.5b) deleted that file with the old DockerServiceRunner, and its replacement in `internal/tools/docker/service/` stubs HTTP with a stdlib responder (`testhelpers_test.go`). go.mod and VERSIONS.md §2.4 were not updated, so the pin outlived its only user by six months.
+
+**The AWS default-config chain was never needed.** `mobsf/r2.go` builds its client with `s3.New` and `credentials.NewStaticCredentialsProvider`, so nothing calls `config.LoadDefaultConfig`. `config`, `feature/ec2/imds`, `internal/ini`, `service/sso`, `service/ssooidc`, `service/sts` and `go-jmespath` came in with the Task 7.4 `go get` and are unreachable from engine code.
+
+**Resolution (user-approved, Rule 4).** Ran `go mod tidy` (engine da11b45). `aws-sdk-go-v2`, `credentials`, `service/s3` and `docker/go-connections` become direct requires. httpmock and the seven modules above are removed. VERSIONS.md §2.4 now matches: httpmock and those seven pins are removed, and `credentials` moves up with the direct AWS pins. Full `go test -race -count=1 ./...` and `check-toolchain.sh` both pass on 1.26.10.
+
+**Not fixed here.** VERSIONS.md §2.4 pins `docker/docker v27.3.1+incompatible`, but go.mod requires `v28.5.2+incompatible`. That drift predates this entry and is a separate version decision.
+
+**How to apply.** When a commit deletes the last importer of a module, run `go mod tidy` in the same commit and remove the VERSIONS.md pin. A pin with no importer is documentation of something that does not exist.
+
 ### 2026-11-02 — The box's Go and golangci-lint were unpinned; snap auto-refresh moved them silently
 
 **What happened.** Re-verifying engine work after a month away, `go version` read `go1.27.3` and golangci-lint `2.15.0`. The pins in VERSIONS.md, `engine.yml` and the engine CLAUDE.md were Go 1.26.2 and v2.11.4. No commit in any repo had changed. `snap changes` showed the cause: *"Auto-refresh snaps go, golangci-lint — today 23:15 UTC"*. Both were snaps tracking `latest/stable`, and snapd refreshes those about four times a day.
@@ -77,7 +91,7 @@ When addressing an entry:
 - Runbook §3.1 now installs both that way.
 - **New forcing function: `shieldscan-engine/scripts/check-toolchain.sh`.** It compares installed Go, golangci-lint and the go.mod `go` line against the pins in `engine.yml`. It reads CI's own pins rather than keeping a copy, so it cannot drift from them. It exits non-zero on any mismatch. `verify-versions.sh` compares pins against *upstream* releases, and nothing compared them against what was *installed*; this is that missing check.
 
-**Found in passing, not fixed here.** `go mod tidy` is not a no-op at HEAD: it promotes directly-used AWS SDK and docker modules out of `// indirect`, and drops `jarcoal/httpmock`, which VERSIONS.md pins but no engine code imports. That is a dependency decision, so it was kept out of the pin commit and filed separately (task_d1153364).
+**Found in passing, not fixed here.** `go mod tidy` is not a no-op at HEAD: it promotes directly-used AWS SDK and docker modules out of `// indirect`, and drops `jarcoal/httpmock`, which VERSIONS.md pins but no engine code imports. That is a dependency decision, so it was kept out of the pin commit and filed separately (task_d1153364), and resolved in engine da11b45 (entry above).
 
 **How to apply.** Never install a toolchain that can refresh itself. Pin both channel and revision, or install a fixed release binary. Run `scripts/check-toolchain.sh` before reporting any test or lint result from the box, and treat a non-zero exit as "these results are not comparable to CI". Resolve drift by installing per the runbook, not by moving CI to match the box: an upgrade is a decision someone makes under the upgrade protocol, not something a timer did.
 
