@@ -61,6 +61,28 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-02 — The box's Go and golangci-lint were unpinned; snap auto-refresh moved them silently
+
+**What happened.** Re-verifying engine work after a month away, `go version` read `go1.27.3` and golangci-lint `2.15.0`. The pins in VERSIONS.md, `engine.yml` and the engine CLAUDE.md were Go 1.26.2 and v2.11.4. No commit in any repo had changed. `snap changes` showed the cause: *"Auto-refresh snaps go, golangci-lint — today 23:15 UTC"*. Both were snaps tracking `latest/stable`, and snapd refreshes those about four times a day.
+
+**Why it was possible.** `REBUILD-RUNBOOK.md` §3.1 installed Go with a bare `sudo snap install go --classic`, which tracks `latest` by definition. golangci-lint was not in the runbook at all and had been installed by hand. So the compiler and linter behind every local test and lint result were whatever snapd last fetched. This is the same class as nikto.conf's hand-edited `FAILURES` (2026-09-09): a load-bearing value that lives only on the box, invisible to review and to a rebuild. The difference is that this one changes itself.
+
+**The consequence was concrete, not theoretical.** The newer linter raised an `errcheck` finding (`cmd/worker/run.go:193`) that CI's pinned linter does not, so the box and CI already disagreed on what "lint clean" meant. It was noticed only because a version string happened to be read.
+
+**A fix that looks right and does not work.** Adding `toolchain go1.26.2` to `go.mod` does not pin the compiler. The `go` command acts on a go.mod `go`/`toolchain` line only when it is *newer* than the installed Go (`GOTOOLCHAIN=auto` only upgrades), so a newer snap keeps running regardless. The repo cannot pin the compiler; only the install can.
+
+**Resolution.**
+- Go: `snap refresh go --channel=1.26/stable` plus `snap refresh --hold go`. A channel can only give its latest patch, so the box landed on **1.26.10**, not 1.26.2. The pin moved to 1.26.10 rather than forcing a revision eight patches stale: 1.26.3–1.26.10 are fixes only, with security fixes to `crypto/tls`, `crypto/x509`, `net/http`, `encoding/xml` and `html/template`, which the Nikto soft-404 probe and XML parser use directly. Updated in VERSIONS.md (table, §3.1 script, appendices), `go.mod`, `engine.yml`, engine CLAUDE.md, and the api repo's `verify-versions.sh`. Full `go test -race` green on 1.26.10.
+- golangci-lint: snap removed. Replaced with the v2.11.4 release binary, checksum-verified, in `/usr/local/bin`, outside any auto-refresh.
+- Runbook §3.1 now installs both that way.
+- **New forcing function: `shieldscan-engine/scripts/check-toolchain.sh`.** It compares installed Go, golangci-lint and the go.mod `go` line against the pins in `engine.yml`. It reads CI's own pins rather than keeping a copy, so it cannot drift from them. It exits non-zero on any mismatch. `verify-versions.sh` compares pins against *upstream* releases, and nothing compared them against what was *installed*; this is that missing check.
+
+**Found in passing, not fixed here.** `go mod tidy` is not a no-op at HEAD: it promotes directly-used AWS SDK and docker modules out of `// indirect`, and drops `jarcoal/httpmock`, which VERSIONS.md pins but no engine code imports. That is a dependency decision, so it was kept out of the pin commit and filed separately (task_d1153364).
+
+**How to apply.** Never install a toolchain that can refresh itself. Pin both channel and revision, or install a fixed release binary. Run `scripts/check-toolchain.sh` before reporting any test or lint result from the box, and treat a non-zero exit as "these results are not comparable to CI". Resolve drift by installing per the runbook, not by moving CI to match the box: an upgrade is a decision someone makes under the upgrade protocol, not something a timer did.
+
+---
+
 ### 2026-09-26 — Process lesson: a fail-open path can make a broken check pass; verify the reason, not the outcome
 
 **Third instance of the integration lesson below (2026-09-09), on a new axis.** That entry is about checking the wrong *boundary*. This one is about checking the right boundary and reading only the *result* there, when a system built to fail safe gives the right result for the wrong reason.

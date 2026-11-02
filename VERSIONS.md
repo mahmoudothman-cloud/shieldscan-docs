@@ -38,7 +38,7 @@ Security scanning tools update frequently. A new Nuclei template for a just-disc
 | Component | Pinned Version | Released | Notes |
 |---|---|---|---|
 | **Python** | **3.13.13** | 2026-04-07 | Python 3.13.13, released April 7, 2026, latest maintenance release of 3.13. 3.14 is newer but 3.13 has longer LTS. |
-| **Go** | **1.26.2** | 2026-04-07 | go1.26.2 (released 2026-04-07) includes security fixes. Go 1.26 released Feb 2026. |
+| **Go** | **1.26.10** | 2026-10-19 | go1.26.10 (released 2026-10-19). Moved from 1.26.2 on 2026-11-02 after a snap auto-refresh exposed that the box was unpinned (DRIFT-LOG 2026-11-02). 1.26.3–1.26.10 are fixes only, no language changes; they include security fixes to `crypto/tls`, `crypto/x509`, `net/http`, `encoding/xml` and `html/template`, which the Nikto soft-404 probe and report parser use directly. Go 1.26 released Feb 2026. |
 | **Node.js** | **22 LTS** | 2024-10-29 | Latest LTS ("Jod"). Use for frontend tooling. |
 | **Ubuntu (server OS)** | **24.04 LTS** | 2024-04-25 | "Noble Numbat" — LTS support until April 2029. Ships Python 3.12 + Go 1.22 natively (we install newer versions manually). MobSF officially supports 24.04 as of 2024. **See Appendix C for 24.04-specific provisioning quirks.** |
 
@@ -357,7 +357,7 @@ PY_LATEST=$(curl -s https://www.python.org/api/v2/downloads/release/?is_publishe
 compare "Python" "3.13.13" "$PY_LATEST"
 
 GO_LATEST=$(curl -s "https://go.dev/VERSION?m=text" | head -1 | sed 's/go//')
-compare "Go" "1.26.2" "$GO_LATEST"
+compare "Go" "1.26.10" "$GO_LATEST"
 
 PG_LATEST=$(curl -s https://www.postgresql.org/versions.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['latestMinor'])" 2>/dev/null || echo "unknown")
 compare "PostgreSQL" "18.3" "$PG_LATEST"
@@ -623,7 +623,7 @@ Ubuntu 24.04 introduces several changes that affect our provisioning scripts. Th
 | Component | 24.04 Default | Our Pin | Action |
 |---|---|---|---|
 | Python 3 | 3.12.3 | 3.13.13 | Install 3.13 via deadsnakes PPA |
-| Go | 1.22 | 1.26.2 | Manual download (unchanged from 22.04) |
+| Go | 1.22 | 1.26.10 | Manual download (unchanged from 22.04) |
 | OpenJDK | 17 (via apt) | 17 | Use apt default |
 | Git | 2.43 | Any recent | Use apt default |
 | Docker | N/A (not installed) | 26+ | Install via official repo |
@@ -811,8 +811,8 @@ add-apt-repository ppa:deadsnakes/ppa -y
 apt-get update
 apt-get install -y python3.13 python3.13-venv python3.13-dev
 
-# ─── 3. Install Go 1.26.2 ───────────────────────────────────────
-GO_VERSION=1.26.2
+# ─── 3. Install Go 1.26.10 ──────────────────────────────────────
+GO_VERSION=1.26.10
 wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
 rm -rf /usr/local/go
 tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz

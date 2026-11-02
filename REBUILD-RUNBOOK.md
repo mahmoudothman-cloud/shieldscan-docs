@@ -145,8 +145,30 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
   | sudo tee /etc/apt/sources.list.d/caddy-stable.list
 sudo apt update && sudo apt install -y caddy
 
-# Go — the snap is what the old box used; go.mod requires >= 1.26.2
-sudo snap install go --classic
+# Go — pinned channel AND held. A bare `snap install go --classic` tracks
+# latest/stable and snapd refreshes it ~4x/day, which is how the box moved
+# from 1.26.2 to 1.27.3 unannounced on 2026-11-02 (DRIFT-LOG). The channel
+# alone still follows 1.26.x patches; the hold is what stops movement.
+# Pin = engine.yml go-version. To take a newer patch, follow the upgrade
+# protocol (VERSIONS.md + go.mod + engine.yml), then `snap refresh --unhold go`.
+sudo snap install go --classic --channel=1.26/stable
+sudo snap refresh --hold go
+
+# golangci-lint — the release binary, checksum-verified, NOT the snap
+# (same auto-refresh problem; the snap went v2.11.4 -> 2.15.0 the same day).
+# Pin = engine.yml golangci-lint-action version.
+V=2.11.4
+cd /tmp
+curl -sSfLO https://github.com/golangci/golangci-lint/releases/download/v$V/golangci-lint-$V-linux-amd64.tar.gz
+curl -sSfL  https://github.com/golangci/golangci-lint/releases/download/v$V/golangci-lint-$V-checksums.txt \
+  | grep linux-amd64.tar.gz | sha256sum -c -
+tar xzf golangci-lint-$V-linux-amd64.tar.gz
+sudo install golangci-lint-$V-linux-amd64/golangci-lint /usr/local/bin/
+cd -
+
+# Then, from the engine checkout — must exit 0 before any test result
+# from this box is reported:
+#   scripts/check-toolchain.sh
 
 # Poetry
 pipx install poetry
