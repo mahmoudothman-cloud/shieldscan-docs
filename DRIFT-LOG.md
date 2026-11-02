@@ -61,6 +61,29 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-09-26 — Process lesson: a fail-open path can make a broken check pass; verify the reason, not the outcome
+
+**Third instance of the integration lesson below (2026-09-09), on a new axis.** That entry is about checking the wrong *boundary*. This one is about checking the right boundary and reading only the *result* there, when a system built to fail safe gives the right result for the wrong reason.
+
+**What happened.** The Nikto soft-404 pass (engine `573c51c`) re-fetches each file-existence finding along with a random sibling control path, and drops the finding if the two responses are byte-identical. Anything short of positive evidence keeps the finding: a failed probe, a truncated body, a budget overrun. The first version sent `Accept-Encoding: identity`, on the theory that an unencoded body compares more directly. Every unit test passed. The first live run through `NewNiktoRunner().Run()` produced the specified outcome exactly: `/public/` and `/.htpasswd` were dropped, and `/ftp/`, a real directory listing, survived.
+
+**It was broken.** `/ftp/` survived only because its probe failed. The debug line read `reason="re-fetching the reported path failed"`, not `"bodies differ"`. When asked for `identity`, the target (Caddy in front of juice-shop) declared `content-length: 11323` and sent 11264 bytes. Curl tolerates that silently. Go correctly rejects it with `unexpected EOF`. So the pass could not decide the one finding that mattered most, and fail-open hid the gap. On any target whose genuine finding had the same server bug, every kept finding would look verified while the pass was doing nothing.
+
+**Why the unit tests could not see it.** `httptest` servers are well-behaved and send exactly what they declare. The defect only existed in the interaction between our request shape and one real server's bug. Requesting `identity` is the rarer request shape, so it is the one servers are least tested against. The fix was to stop setting the header and let Go negotiate gzip and decompress both sides. That is the request every other client sends, so it is the least likely to find a new server bug. A regression test now pins the truncated-body shape, with the partial body made equal to the control so that tolerating the truncation would produce a wrong *drop*.
+
+**The general form.**
+
+> **When a check is designed to fail safe, the safe outcome is not evidence that the check ran. Verify the decision path (which branch produced each result), not just the result.**
+
+Fail-open is the right default for a security tool, and it is also exactly what makes this failure shape invisible. Its whole purpose is to produce the acceptable answer when it cannot decide, so an outcome-only check cannot tell "decided correctly" from "could not decide". Two things caught it: the debug log recorded a reason for every decision, and someone read the reason rather than the finding count.
+
+**How to apply.**
+- Any fail-safe or fail-open component logs *why* it reached each outcome, not just the outcome. The soft-404 pass logs a `reason` on every decision and a `kept_undecided` count in its summary, defined so that only "could not answer" counts. A target whose `kept_undecided` equals its candidate count is one where the pass is inert, and that is now visible in one number.
+- Live verification of such a component asserts on the reasons, not just on what survived. Here: `kept_undecided=0` and `/ftp/` kept on `"bodies differ"`. Both held on the post-fix runs.
+- A unit-tested HTTP client has been tested against `httptest`, not against servers. Its first real-target run is part of its verification, not a formality after it.
+
+---
+
 ### 2026-09-09 — Process lesson: verify through the integration, not the tool
 
 **Companion to the pre-flight lesson below (2026-08-15).** Same family, different axis: that one is about running the check under the wrong *configuration*; this one is about running it against the wrong *boundary*.
@@ -78,6 +101,8 @@ When addressing an entry:
 **Ownership, stated plainly.** The check was specified by the user and was too narrow; it was also executed as written and no further. Writing a narrow check and satisfying only the narrow check are two separate contributions to the same outcome, and the correction belongs to the process rather than to either party. The repair (engine `80ab2f0`) was verified by driving `NewNiktoRunner().Run()` against the real 2.5.0 binary and a live TLS host: 460s, `err=nil`, 11 findings — including `/.htpasswd`, which no previous run had ever reached.
 
 **How to apply.** For any tool upgrade: run one scan through the engine's own runner before declaring it verified, and state which boundary the check crossed. Where a live integration run is impractical, say so explicitly rather than presenting a tool-level check as complete — the same escape hatch the pre-flight lesson specifies.
+
+**Follow-on (2026-09-26, above):** crossing the right boundary is necessary but not sufficient. A fail-open component can produce the correct outcome at that boundary while its check never ran, so verify which decision path produced the result.
 
 ---
 
