@@ -61,6 +61,43 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-07 — Open-vulnerability counts are per scan, not per target; the corroborated badge has never fired
+
+**Observed (OVH, `GET /v1/orgs/{org}/summary` first run):** the demo org's 50
+historical scans of two targets yield **1,078 "open" vulnerabilities**
+(6 critical / 19 high / 366 medium / 95 low / 592 info) and
+**`corroborated: 0`** across all of them.
+
+**Cause 1 — no cross-scan identity.** Every scan writes its own
+`vulnerabilities` rows. Nothing links this week's CSP finding to last
+week's copy (same `fingerprint`, same project), so a re-found issue is
+counted once per scan and a fixed issue is never auto-resolved. The
+"fixed → verified on next scan" flow the product promises has no data
+model behind it yet.
+
+**Cause 2 — corroboration never reaches 2.** `corroborated_count` is 1 on
+all 1,078 rows, including SQLi reported by both nuclei and wapiti on the
+same route in scan `72532500`. The M9 correlation stage is not raising the
+count for same-fingerprint / same-route cross-engine pairs, or the
+fingerprints differ per engine so the dedup step never merges them.
+Needs investigation before any UI shows the badge as a selling point.
+
+**Decision for M11 (user, 2026-11-07, option 3 of 3):**
+- Dashboard truth now: `/summary` counts open vulnerabilities **only on
+  each live project's latest finished scan** (`DISTINCT ON project_id`,
+  newest `completed_at`). Lifetime scan counts stay org-wide. Shipped in
+  shieldscan-api with the summary endpoint.
+- Real fix later, first post-M11 engineering item: **cross-scan
+  deduplication by (project, fingerprint)** — `first_seen_scan_id`,
+  `last_seen_scan_id`, status carried forward, not-re-found → auto
+  `resolved`. Migration + M9 pipeline change; touches scoring, so it gets
+  its own session with the 941-test suite as the net.
+- Corroboration investigation rides with it; until then the UI renders the
+  badge from `corroborated_count >= 2` and will simply not show it.
+
+**Not an ADR yet.** It becomes one when the dedup model is designed.
+
+
 ### 2026-11-02 — `go mod tidy` made a no-op; httpmock and the AWS default-config chain dropped
 
 **What happened.** Found during the Go 1.26.10 pin (entry below): `go mod tidy` rewrote the engine's go.mod at HEAD. Every session that follows the engine checklist (`go mod tidy && go test -race ./...`) produced that diff, so the "clean baseline" step never was one.
