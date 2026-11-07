@@ -73,7 +73,7 @@ Worker servers run security scanning tools at high network throughput. Hetzner d
 - Direct support for Docker + nested virtualization
 - Frankfurt DC provides low-latency to MENA region
 
-> **2026-11-07:** this section describes the intended fleet. What actually runs is a single OVHcloud VPS-2 in Canada-East (4 vCore / 8 GB), provisioned per ; Hetzner CX/CAX lines were unavailable to order on 2026-11-04. Residency note: CONSTITUTION.md §17.3.
+> **2026-11-07:** this section describes the intended fleet. What actually runs is a single OVHcloud VPS-2 in Canada-East (4 vCore / 8 GB), provisioned per REBUILD-2026-11-04-OVH.md; Hetzner CX/CAX lines were unavailable to order on 2026-11-04. Residency note: CONSTITUTION.md §17.3.
 
 **Use managed services where the operational overhead isn't worth it:** Cloudflare R2 for storage, Neon for PostgreSQL if team is small.
 
