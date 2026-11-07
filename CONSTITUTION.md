@@ -772,8 +772,15 @@ Per SPECIFICATION.md §5.4. Key rules:
 
 ### 17.3 Data Sovereignty
 
-- **MENA customers' data** stored in Frankfurt region (closest available)
-- **EU customers' data** stored in EU region
+> **Status 2026-11-07 (REBUILD-2026-11-04-OVH.md):** production is one
+> OVHcloud VPS in **Beauharnois, Canada-East** — the only region with stock
+> when the Kamatera box was replaced. Canada holds an EU adequacy decision,
+> so the DPA says "EU or EU-adequacy-country hosting", not "EU". The two
+> lines below remain the target; re-check OVH EU stock (Gravelines /
+> Strasbourg) before public beta and move with the same runbook.
+
+- **MENA customers' data** stored in Frankfurt region (closest available) — *target; see status above*
+- **EU customers' data** stored in EU region — *target; see status above*
 - **Cross-border data transfer** requires customer consent
 - **Local data residency** offered to enterprise customers on request
 
