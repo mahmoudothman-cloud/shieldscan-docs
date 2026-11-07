@@ -61,6 +61,24 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-07 — Public quick scans reuse the pipeline instead of the addendum's dedicated executor
+
+**What the addendum said.** ADDENDUM-CRITICAL-5 §2 (M10.5) specified a separate `public_scans` table with its own grade logic, a dedicated Go executor on `shieldscan:queue:public` with a 60 s hard cap, `POST /v1/public/check`, and a 30-day result TTL.
+
+**What was built (api commit, M11 pre-work).** `POST /v1/public/quick-scans` + `GET /v1/public/quick-scans/{slug}`, per the approved dashboard design v1.0 (flow F1). A `public_scans` table still exists, but it is the *request record* (email, IP, consent, slug, expiry, conversion), not a parallel results store. The work itself is an ordinary `Scan` row with `is_public=True`, `ScanType.QUICK`, created inside one system organization (`PUBLIC_SCAN_ORG_SLUG`, no members) with one project per target domain.
+
+**Three deliberate deviations from the normal pipeline, all keyed on `Scan.is_public`:**
+
+1. **No recon phase.** `ScanOrchestrator.dispatch` sends the QUICK tool set (nuclei quick depth + sslyze) straight at the typed URL. A free scan of a large domain must never fan out into hundreds of subdomain jobs; the recon-driven phase-2 is what makes authenticated scans thorough, and it is also what makes them unbounded.
+2. **No AI pipeline.** `_maybe_complete_scan` finalises public scans inline (COMPLETED/PARTIAL) even when raw findings exist. Zero AI spend on free scans; the result page is built from raw findings (nuclei/sslyze titles + descriptions). The AI explanation, fix, and corroboration are what the account unlocks — that is the funnel, so this is a product choice, not only a cost one.
+3. **Grade from raw severities**, not the addendum's finding-type weights: 100 − (critical 30, high 15, medium 7, low 2, info 0), clamped; A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, else F. The type-weight table assumed the dedicated executor's structured output.
+
+**Other parameters.** Result TTL 7 days (design) not 30 (addendum); limits 5 per IP per hour (Redis window) and 1 per email per 24 h (counted in the DB so a Redis restart cannot reset it); the slug is `secrets.token_urlsafe(16)` and is emailed, never listed. Top 3 findings visible, the rest counted only.
+
+**Side fix.** The inline completion path (empty scans) never stamped `completed_at`; it does now.
+
+**Follow-ups.** Conversion tracking (`converted_org_id` on register with `?from=slug`) — next slice with the React auth pages. The wall-clock is ~1–3 min, not the 60 s the addendum wanted; if that matters for the funnel, the fix is a tighter nuclei template set for `depth=quick`, not a second executor. Redis-flush bypass of the IP limit is accepted (the email limit still holds).
+
 ### 2026-11-07 — Open-vulnerability counts are per scan, not per target; the corroborated badge has never fired
 
 **Observed (OVH, `GET /v1/orgs/{org}/summary` first run):** the demo org's 50
