@@ -39,13 +39,21 @@ Known, pre-existing: qdrant-client 1.17.1 vs server v1.11.5 warning (same on Kam
 
 ## Still to do
 
-- [ ] DNS: `shieldscan.odyssey-eg.com` A → 144.217.27.177 (Caddy issues the cert on first hit; nikto becomes local)
-- [ ] Re-run a `full_web` after DNS; expect 7/7 completed
-- [ ] Push the three repos (local commits only exist on Kamatera + here); then shut Kamatera down
-- [ ] Commit this file + DRIFT-LOG entry in `shieldscan-docs`
+- [x] DNS: `shieldscan.odyssey-eg.com` A → 144.217.27.177 (done 2026-11-05; nikto local)
+- [x] Re-run a `full_web` after DNS; 7/7 completed (394 raw → 40 unique)
+- [x] Push the three repos (deploy key on this box, GitHub `mahmoudothman-cloud`) — Kamatera cancel still owner-side after ~Nov 11
+- [x] Commit this file + DRIFT-LOG entry in `shieldscan-docs`
 - [ ] `DEPCHECK_NVD_API_KEY` still unset (runbook §3.2 note) — depcheck produces nothing until it is
-- [ ] Residency line in docs/DPA: Canada (EU adequacy), not EU — re-check OVH EU stock before public beta
+- [x] Residency line in docs (CONSTITUTION §17.3 note); DPA text still owner-side — re-check OVH EU stock before public beta
 - [ ] Demo login reset for this test: `~/.demo-login` (chmod 600) on the box
+
+## Added since (M11, 2026-11-07/08)
+
+- `app.shieldscan.odyssey-eg.com` A → 144.217.27.177; Caddy site for the React app with `/v1` proxied (OPERATIONS-RUNBOOK §5.5).
+- `.env`: `ENVIRONMENT=production`, `APP_BASE_URL=https://app.shieldscan.odyssey-eg.com`.
+- Alembic head `b7c3e9d1a2f4` (public_scans + vulnerability identity); `scripts/backfill_vulnerability_identity.py` run once (1116 rows → 68 open).
+- Worker binary rebuilt from engine `622412c` (nuclei `-tags`); `bin/worker` replaced with the service stopped (text-file-busy otherwise).
+- Public quick scans run in system org `shieldscan-public` (no members); their project rows live there.
 
 ## Operate
 

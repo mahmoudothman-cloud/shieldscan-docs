@@ -816,16 +816,56 @@ done
 
 ### 5.5 Frontend Deployment
 
-React frontend is static — deploys via Cloudflare Pages:
+**Current (single-box, 2026-11-08):** the React app is static and is served by the same
+Caddy that fronts the scan target, on its own host, with the API proxied under `/v1` so
+the session cookie is first-party and CORS never applies.
 
 ```bash
-cd shieldscan-web
-npm run build
-# dist/ folder contains static assets
-
-# Cloudflare Pages auto-deploys on push to main via GitHub integration
-# No manual steps needed for production
+# on the box
+cd ~/shieldscan/shieldscan-api/shieldscan-web
+npm ci --no-audit --no-fund && npm run lint && npm test && npm run build   # same as CI
+# Caddy serves dist/ directly; no restart needed for a rebuild
 ```
+
+`/etc/caddy/Caddyfile` (the app site; the Juice Shop target site is separate):
+
+```
+app.shieldscan.odyssey-eg.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		root * /home/ubuntu/shieldscan/shieldscan-api/shieldscan-web/dist
+		try_files {path} /index.html
+		file_server
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+	}
+}
+```
+
+API `.env` keys the web app depends on: `ENVIRONMENT=production` (gives the refresh
+cookie its `Secure` flag — `development` relaxes it for http://localhost), and
+`APP_BASE_URL=https://app.shieldscan.odyssey-eg.com` (links in invite / quick-scan emails
+and the public `register_url`). `CORS_ORIGINS` is not needed while app and API share an
+origin. `/home/ubuntu` must be `o+rx` for Caddy to read `dist/`.
+
+Session model (CONSTITUTION §14.2): `/v1/auth/login` and `/refresh` set the refresh token
+as an httpOnly cookie scoped to `/v1/auth`; the access token lives only in page memory.
+`/refresh` and `/logout` accept the cookie in place of a body token; CLI/Action/MCP clients
+keep using body tokens.
+
+**Later (multi-box):** `dist/` to Cloudflare Pages or any static host, API on
+`api.<domain>`, and the cookie's `SameSite=Lax` still holds because both are under one
+registrable domain — set `CORS_ORIGINS` then.
 
 ---
 

@@ -260,34 +260,48 @@ belongs in this table in the same commit. Get a digest via
 
 ### 2.6 Frontend (shieldscan-web)
 
+Lives at `shieldscan-api/shieldscan-web/` (SPEC §repo layout). Exact versions are in
+`package-lock.json` (committed); the ranges below are what `package.json` pins.
+
 ```json
 {
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0",
-    "@tanstack/react-query": "^5.60.0",
-    "axios": "^1.7.0",
-    "tailwindcss": "^3.4.15",
-    "vite": "^5.4.11",
-    "typescript": "^5.6.0",
-    "react-dropzone": "^14.3.0",
-    "react-syntax-highlighter": "^15.6.0",
-    "recharts": "^2.13.0",
-    "@microsoft/fetch-event-source": "^2.0.1",
-    "lucide-react": "^0.468.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.9.0",
+    "@tanstack/react-query": "^5.107.1",
+    "tailwindcss": "^4.3.5",
+    "lucide-react": "^1.70.0",
+    "recharts": "^3.3.0",
+    "zod": "^4.1.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.0",
-    "vitest": "^2.1.0",
-    "@testing-library/react": "^16.1.0",
-    "@testing-library/user-event": "^14.5.0",
-    "eslint": "^9.15.0"
-  }
+    "vite": "^7.1.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "@tailwindcss/vite": "^4.3.5",
+    "typescript": "~5.9.0",
+    "vitest": "^5.1.0",
+    "jsdom": "^31.0.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.0",
+    "eslint": "^9.30.0",
+    "typescript-eslint": "^8.40.0",
+    "eslint-plugin-react-hooks": "^7.1.0",
+    "prettier": "^3.6.0"
+  },
+  "overrides": { "minimatch": "^11.0.1" }
 }
 ```
 
-**Note:** We're intentionally staying on React 18 (not React 19) for ecosystem stability. Upgrade to React 19 after major libraries (TanStack Query, etc.) have mature React 19 support.
+**2026-11-08 (M11):** moved to React 19 / Tailwind 4 / Vite 7 / React Router 7 / Vitest 5.
+The earlier note ("stay on React 18 until the ecosystem matures") is retired: TanStack Query
+5.1xx, React Router 7 and Testing Library 16 all target React 19. `axios`,
+`react-dropzone`, `react-syntax-highlighter` and `@microsoft/fetch-event-source` were not
+adopted: the app uses `fetch` with an in-memory access token (`src/lib/api.ts`), a 60-line
+SSE-over-fetch reader (`src/lib/sse.ts`), and a React-only Markdown renderer
+(`src/lib/markdown.tsx`). `vitest@3` pulled a `tinypool` with a critical advisory, hence 5;
+`minimatch` is overridden until `typescript-eslint` moves past 7.x–11.0.0. Node 22 LTS in
+`.nvmrc` (the box runs 26). TypeScript 7 (tsgo) exists but is not adopted yet.
 
 ### 2.7 External SaaS / Cloud
 

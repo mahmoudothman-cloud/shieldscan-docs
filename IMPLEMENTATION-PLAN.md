@@ -3219,6 +3219,7 @@ git push origin v1.0.0
 | 5 | M7 (finish), M8, M9 (start) | MobSF + ZAP + Trivy runners + recon pipeline + AI pipeline start |
 | 6 | M9 (finish), M10, M11 (start) | AI pipeline complete + vuln/report APIs + frontend scaffold |
 | 7-8 | M11 (all) | Full React dashboard: mobile scan, attack surface, vuln explorer, reports |
+| — | **M11 status 2026-11-08** | Shipped (api `723178a`): dashboard, projects/verify, scan run + live feed, vulnerabilities + detail, report, settings, compliance, tool health, public quick scan; cross-scan vulnerability identity. Not in M11: mobile upload UI, attack-surface tree, scan comparison view, onboarding wizard (ADDENDUM-CRITICAL-5 M11.13) — carried to M11.x after M13. See DRIFT-LOG 2026-11-08. |
 | 8-9 | M12 | Stripe billing + GitHub + Slack + webhooks + emails |
 | 9 | M13 | CLI tool + GitHub Action |
 | 10 | M14, M15 | On-prem agent + testing + launch |

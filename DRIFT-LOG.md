@@ -61,6 +61,18 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-08 — M11 dashboard shipped on React 19 / Tailwind 4 / Vite 7, in-repo, behind the API's Caddy
+
+**What the plan said.** VERSIONS §2.6 pinned React 18 / Tailwind 3 / Vite 5 "until the ecosystem matures"; OPERATIONS-RUNBOOK §5.5 deployed the SPA to Cloudflare Pages against `api.shieldscan.io`; the approved design v1.0 assumed quick scans need no domain verification and promised a 60-second public scan.
+
+**What was built.** `shieldscan-api/shieldscan-web/` on the versions now in VERSIONS §2.6 (ecosystem has matured; see note there). Served by the same Caddy as the API on `app.shieldscan.odyssey-eg.com` with `/v1` proxied, so the httpOnly refresh cookie (CONSTITUTION §14.2, added to `/auth/login|refresh|logout` in api `d736da8`) is first-party. Pages: auth (+ `/accept-invite` consuming reset + verify tokens), dashboard, projects + verification, scan run with SSE-over-fetch live feed, vulnerabilities + detail, report, settings (org / members / API keys), compliance, tool health, public quick-scan landing and `/q/:slug` result. 29 web tests; `web` job added to CI.
+
+**API changes made for it, each with tests:** org GET/PATCH + members CRUD (`c62cdae`), scan lists + detail + org summary (`67017a8` and before), public quick-scan endpoints (`57eaef0`, see entry above), `ScanType.QUICK` in the domain-verify bypass (`9e09e08`), `/fix` `is_fallback` (`f747a48`), org posture counts open vulnerabilities only (`4525007`), cross-scan identity (`723178a`). Nuclei engine now honours `template_categories` as `-tags` (engine `622412c`).
+
+**Deviations kept.** (1) Quick scans skip DNS verification — the public endpoint runs the same passive set for anyone, so the gate protected nothing. (2) Public scan copy says "about two minutes", not 60 s; the real fix is a tighter template set, logged above. (3) No Cloudflare Pages: one box, one Caddy; the runbook keeps the multi-box variant as "later".
+
+**Test harness fix (api `723178a`).** Two latent races in `tests/conftest.py`: fire-and-forget `api_keys.last_used_at` tasks are now tracked (`app.dependencies._background_tasks`) and drained in teardown, and the module-level `app.db.engine` pool is disposed per test (`dispose(close=False)`) because asyncpg connections are bound to the event loop that created them — a pooled connection reused on a later loop never reads its socket, and a pending UPDATE on it held a lock that the next `drop_all` waited on forever. Surfaced by timing changes, not by any one feature.
+
 ### 2026-11-07 — Public quick scans reuse the pipeline instead of the addendum's dedicated executor
 
 **What the addendum said.** ADDENDUM-CRITICAL-5 §2 (M10.5) specified a separate `public_scans` table with its own grade logic, a dedicated Go executor on `shieldscan:queue:public` with a 60 s hard cap, `POST /v1/public/check`, and a 30-day result TTL.
@@ -80,6 +92,8 @@ When addressing an entry:
 **Follow-ups.** Conversion tracking (`converted_org_id` on register with `?from=slug`) — next slice with the React auth pages. The wall-clock is ~1–3 min, not the 60 s the addendum wanted; if that matters for the funnel, the fix is a tighter nuclei template set for `depth=quick`, not a second executor. Redis-flush bypass of the IP limit is accepted (the email limit still holds).
 
 ### 2026-11-07 — Open-vulnerability counts are per scan, not per target; the corroborated badge has never fired
+
+**Resolved 2026-11-08 (api `723178a`).** Cross-scan identity: `services/vulnerability_identity.py` links each scan's rows to the same issue in the project's history by raw-finding fingerprint overlap (`previous_id` / `superseded_by_id` / `first_seen_at` / `regression`), carries false-positive and accepted-risk status forward, flags regressions, and auto-resolves older open issues that every engine which found them ran clean on. Summary, list and posture count open once per issue (superseded excluded; the earlier "latest finished scan per project" scoping in `/summary` is gone). Backfilled on prod: 1116 rows → 68 open, 989 superseded, 94 auto-resolved, 35 regressions. The corroboration investigation (why `corroborated_count` never reaches 2) and SQLi severity scoring remain open below.
 
 **Observed (OVH, `GET /v1/orgs/{org}/summary` first run):** the demo org's 50
 historical scans of two targets yield **1,078 "open" vulnerabilities**
