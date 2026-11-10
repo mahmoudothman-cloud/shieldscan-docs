@@ -303,6 +303,15 @@ SSE-over-fetch reader (`src/lib/sse.ts`), and a React-only Markdown renderer
 `minimatch` is overridden until `typescript-eslint` moves past 7.x–11.0.0. Node 22 LTS in
 `.nvmrc` (the box runs 26). TypeScript 7 (tsgo) exists but is not adopted yet.
 
+### 2.6b CLI / Action / MCP (shieldscan-cli)
+
+Separate repo `mahmoudothman-cloud/shieldscan-cli`. Go `1.24` in go.mod (box builds with 1.26.10),
+no third-party modules. golangci-lint v2.11.4 (same pin as the engine), goreleaser v2 on `v*` tags
+for linux/darwin/windows × amd64/arm64. `internal/api/testdata/openapi.json` is a copy of the API's
+`/openapi.json`; refresh it whenever a schema the CLI uses changes (the drift test says which).
+Protocol: MCP 2025-06-18 (negotiates 2025-03-26, 2024-11-05). Tags: `v0.3.0`; the Action is
+referenced as `shieldscan-cli/action@v0` (moving major tag).
+
 ### 2.7 External SaaS / Cloud
 
 | Service | Pinned API Version | Notes |

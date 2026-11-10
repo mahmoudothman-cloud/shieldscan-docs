@@ -61,6 +61,20 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-10 — M13 shipped as a Go CLI in its own repo; MCP hand-rolled; PR delta on identity links
+
+**What the plan said.** IMPLEMENTATION-PLAN M13 named a CLI, a GitHub Action and an MCP server without fixing the language or repo; VERSIONS §2.6 had listed Python-side client reuse as an option.
+
+**What was built.** `mahmoudothman-cloud/shieldscan-cli` (Go 1.24+, stdlib only, goreleaser; v0.1.0 CLI, v0.2.0 MCP server, v0.3.0 compare + PR delta). Decision: Go over Python because the artefact runs in other people's CI and on laptops with no runtime of ours (one static binary, `gh release download`, no pip); the cost is re-declaring the API's wire types in Go, mitigated by a schema-drift test against the committed `/openapi.json`. New repo rather than `shieldscan-engine/cmd/` because the CLI is public and release-tagged; the engine is internal.
+
+**MCP is hand-rolled** (~200 lines: newline-delimited JSON-RPC, initialize/ping/tools/list/tools/call, protocol 2025-06-18 with 2025-03-26 and 2024-11-05 negotiated) instead of the official Go SDK, to keep the binary dependency-free; the Tool/Handler shape maps 1:1 if prompts/resources are ever needed. Seven tools: list_projects, list_vulnerabilities, get_vulnerability (+evidence), get_fix, update_vulnerability_status, start_scan, scan_status.
+
+**PR delta uses identity links, not `POST /scans/compare`.** The compare endpoint (Task 4.6) keys on `Vulnerability.fingerprint`, which is the first-promoted raw finding and depends on batch order; `previous_id` / `superseded_by_id` / `regression` (2026-11-08 entry) are the stable signal. The endpoint is left in place for the dashboard's scan-comparison view (M11.x) and should move to the same links when that view is built.
+
+**Two API fixes the CLI's smoke test surfaced.** (1) In-app QUICK scans still sent `depth=quick` (nuclei high/critical only) — 0 findings on Juice Shop while the public quick scan returned 19; QUICK now injects `depth=deep` + `QUICK_TEMPLATE_TAGS` everywhere (api `61caae6`). (2) That bad scan had "run clean" and auto-resolved 10 real issues, which the next scan flagged as regressions — correct, but it showed auto-resolve needed a scope check: the effective config (depth, template tags) is now persisted on `Scan.config` at dispatch and `scope_covers()` refuses to resolve against a narrower or unknown scope. Rows dispatched before this have no recorded scope and are matched but never auto-resolved against.
+
+**Operational.** A `cli-smoke` API key was created on the demo org for the smoke tests and revoked at the end of M13. The CLI repo is private for now; the Action downloads releases through `gh` with the workflow token, which works for private repos only within the same account — make the repo public before any outside user adopts the Action.
+
 ### 2026-11-08 — M11 dashboard shipped on React 19 / Tailwind 4 / Vite 7, in-repo, behind the API's Caddy
 
 **What the plan said.** VERSIONS §2.6 pinned React 18 / Tailwind 3 / Vite 5 "until the ecosystem matures"; OPERATIONS-RUNBOOK §5.5 deployed the SPA to Cloudflare Pages against `api.shieldscan.io`; the approved design v1.0 assumed quick scans need no domain verification and promised a 60-second public scan.
