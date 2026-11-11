@@ -61,6 +61,14 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-11 — M12 starts with a database plan catalog, EGP ledger and Paymob first; the ladder is reconciled
+
+**What the docs said.** SPEC §9.1 had one ladder ($29/$99/$299, Business unlimited), review v4.2 §7 C2 another ($29/$79/$295 with EGP display prices and a USD ledger), and the plan row for M12 said "Stripe billing". Nothing in code enforced any of it (`/fix`, reports, compliance and tool-health carried "forward-pinned to billing").
+
+**Decided (Plans & Billing Review v1.1, approved 2026-11-11).** One ladder (SPEC §9.1 v4.1): Free / Starter 999 EGP · $29 / Growth 2,999 · $99 / Business 12,999 · $299 (full scans capped at 500) / Enterprise. Prices are gross with 14% VAT inside; EGP and USD are set independently per plan version, not converted. Ledger in EGP (Paymob settles only in EGP), reversing doc 08 §8's USD ledger. Paymob first through its Subscriptions module (plan → intention → Unified Checkout 3DS → tokenised card → auto-deduction, per-plan webhook, HMAC-SHA512 callback), Paddle later behind the same `BillingProvider` interface. No trial: Free with one full scan a month is the trial. Monthly and annual both. Selling entity is the new company, not Odyssey (legal name / tax id are settings, not constants). Platform admin at launch: the founder's account only.
+
+**Built (slice 1, api `bd91294`).** Tables `plans`, `plan_versions` (versioned, grandfathered, one live version per plan × interval), `org_subscriptions` (one live row per org; Free is a real `manual` row), `org_limit_overrides`, `usage_counters` — the last three RLS tenant tables. Migration `c4d2e8f9a1b3` seeds the ladder and puts every existing org on Free before enabling RLS. `services/plans.get_effective_limits` resolves version + non-expired overrides with a 60 s Redis cache; suspended/canceled fall back to Free. `GET /v1/plans` is the public catalog; `GET /v1/orgs/{id}/billing/summary` returns limits, period and usage. `POST /scans` meters each scan in the same transaction; enforcement (402 `plan_limit_reached`) is slice 2, the admin API/UI slice 3, Paymob slice 4 (blocked on a merchant account, not started yet).
+
 ### 2026-11-10 — M13 shipped as a Go CLI in its own repo; MCP hand-rolled; PR delta on identity links
 
 **What the plan said.** IMPLEMENTATION-PLAN M13 named a CLI, a GitHub Action and an MCP server without fixing the language or repo; VERSIONS §2.6 had listed Python-side client reuse as an option.

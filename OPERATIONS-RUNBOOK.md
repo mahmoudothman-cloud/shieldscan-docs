@@ -984,6 +984,28 @@ Cron: `0 3 * * * poetry run python scripts/cleanup_retention.py`
 
 ---
 
+### 6.6 Plan Catalog & Subscriptions (M12)
+
+Plans, prices and limits are rows, not code. Until the admin API (M12 slice 3) exists:
+
+```bash
+# Put an org on a plan (manual subscription; cancels the current one, clears the limits cache)
+cd ~/shieldscan/shieldscan-api
+poetry run python scripts/set_org_plan.py <org-slug> <free|starter|growth|business|enterprise> [--interval month|year] [--note "..."]
+
+# What an org is entitled to right now (as a member of the org)
+curl -s -H "Authorization: Bearer $TOKEN" https://app.shieldscan.odyssey-eg.com/v1/orgs/<org-id>/billing/summary | jq
+
+# Public catalog (what the pricing page renders)
+curl -s https://app.shieldscan.odyssey-eg.com/v1/plans | jq '.plans[] | {code, prices: [.prices[] | {billing_interval, price_egp_cents}]}'
+```
+
+Changing a price or a limit = insert a new `plan_versions` row and set `retired_at` on the old
+one (existing subscriptions keep their version); never UPDATE a live version's `limits` in place.
+The effective-limits cache is `shieldscan:limits:<org-id>` (60 s TTL) — `DEL` it after a manual
+SQL change. `org_subscriptions`, `org_limit_overrides` and `usage_counters` are RLS tables: set
+`app.current_org_id` before touching them in psql.
+
 ## 7. Monitoring & Observability
 
 ### 7.1 The Four Signals

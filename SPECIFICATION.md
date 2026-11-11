@@ -1,6 +1,6 @@
 # ShieldScan — Technical Specification
 
-**Version:** 4.0 (consolidated)
+**Version:** 4.1 (consolidated; §9.1 plan catalog 2026-11-11)
 **Date:** 2026-04-18
 **Author:** Odyssey Technology
 **Status:** Approved for implementation
@@ -1114,22 +1114,36 @@ AI pipeline must be resilient to partial failures:
 
 ### 9.1 Pricing Tiers
 
+> **v4.1 (2026-11-11, Plans & Billing Review v1.1).** The ladder below is the *seed* of the plan
+> catalog, not a code constant: plans, prices and limits live in `plans` / `plan_versions` and are
+> edited by a platform admin; code reads an org's effective limits through
+> `services.plans.get_effective_limits` and never names a tier. Prices are **gross with 14% VAT
+> inside**, set independently in EGP (Paymob, first) and USD (Paddle, later); annual = 10 × monthly.
+> Business is capped (not unlimited) on full scans; Enterprise is where unlimited lives. The
+> previous v4.0 table ($29/$99/$299, Business unlimited) and review v4.2 C2 ($79/$295) are
+> superseded by this one. DRIFT-LOG 2026-11-11.
+
 | Feature | Free | Starter | Growth | Business | Enterprise |
 |---|---|---|---|---|---|
-| Price (monthly) | $0 | $29 | $99 | $299 | Custom |
-| Team size | 1 user | 3 users | 10 users | Unlimited | Unlimited |
-| Projects | 1 | 5 | 25 | Unlimited | Unlimited |
-| Quick scans/mo | 5 | 50 | 500 | Unlimited | Unlimited |
-| Full web scans/mo | 0 | 10 | 100 | Unlimited | Unlimited |
-| Mobile scans/mo | 0 | 0 | 2 | Unlimited | Unlimited |
-| Full spectrum/mo | 0 | 0 | 0 | 50 | Unlimited |
-| Recon (subdomain) | ✓ (10 max) | ✓ (50 max) | ✓ (100 max) | ✓ (500 max) | ✓ (unlimited) |
-| AI fix generation | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Cross-layer correlation | ✗ | ✗ | ✓ | ✓ | ✓ |
-| Compliance reports | ✗ | ✗ | ISO 27001 | +SOC2 +PCI | All frameworks |
-| On-prem agent | ✗ | ✗ | ✗ | ✓ | ✓ |
-| White-label | ✗ | ✗ | ✗ | ✗ | ✓ |
-| SLA | ✗ | ✗ | 99.5% | 99.9% | 99.95% |
+| Price (monthly, gross) | 0 | 999 EGP / $29 | 2,999 EGP / $99 | 12,999 EGP / $299 | Custom |
+| Team size (`users.max`) | 1 | 3 | 10 | Unlimited | Per contract |
+| Projects (`projects.max`) | 1 | 5 | 25 | Unlimited | Per contract |
+| API keys (`api_keys.max`) | 1 | 5 | 20 | Unlimited | Per contract |
+| Quick scans / period | 5 | 50 | 500 | Unlimited | Per contract |
+| Full scans / period (full_web, +source, api, container) | 1 | 10 | 100 | 500 | Per contract |
+| Mobile scans / period | 0 | 0 | 2 | 10 | Per contract |
+| Full spectrum / period | 0 | 0 | 0 | 50 | Per contract |
+| Recon (`recon.subdomains.max`) | 10 | 50 | 100 | 500 | Unlimited |
+| AI fix generation (`ai_fix`) | pattern fallback | ✓ | ✓ | ✓ | ✓ |
+| Cross-layer correlation (`cross_layer`) | ✗ | ✗ | ✓ | ✓ | ✓ |
+| Compliance frameworks | — | — | ISO 27001, Egypt PDPL | + SOC 2, PCI DSS | All |
+| CLI / Action / MCP writes (`cli_write`) | read-only | ✓ | ✓ | ✓ | ✓ |
+| Priority queue | ✗ | ✗ | ✓ | ✓ | ✓ |
+| SSO | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+Limit keys are the `limits` JSONB vocabulary (`-1` = unlimited); feature keys the `features`
+JSONB. The metering period is the subscription's current period (calendar month for Free).
+Enforcement points and the 402 `plan_limit_reached` shape: Plans & Billing Review v1.1 §4.
 
 ### 9.2 Add-Ons
 

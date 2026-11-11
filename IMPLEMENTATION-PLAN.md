@@ -3221,7 +3221,8 @@ git push origin v1.0.0
 | 7-8 | M11 (all) | Full React dashboard: mobile scan, attack surface, vuln explorer, reports |
 | — | **M11 status 2026-11-08** | Shipped (api `723178a`): dashboard, projects/verify, scan run + live feed, vulnerabilities + detail, report, settings, compliance, tool health, public quick scan; cross-scan vulnerability identity. Not in M11: mobile upload UI, attack-surface tree, scan comparison view, onboarding wizard (ADDENDUM-CRITICAL-5 M11.13) — carried to M11.x after M13. See DRIFT-LOG 2026-11-08. |
 | — | **M13 status 2026-11-10** | Shipped in `shieldscan-cli` v0.3.0: CLI (scan/status/vulns/fix/report/compare/projects/whoami, exit codes 0–3, `--fail-on`), GitHub Action (install via gh, gate, SARIF, sticky PR delta comment), MCP server (7 tools). API: QUICK unified with the passive set; auto-resolve scope guard. See DRIFT-LOG 2026-11-10. Next: M12 billing. |
-| 8-9 | M12 | Stripe billing + GitHub + Slack + webhooks + emails |
+| — | **M12 slice 1 status 2026-11-11** | Plan catalog in DB (`plans`, `plan_versions`, `org_subscriptions`, `org_limit_overrides`, `usage_counters`), ladder v1.0 seeded, `get_effective_limits`, `GET /v1/plans`, billing summary, scan metering. Next: slice 2 enforcement, slice 3 admin, slice 4 Paymob (needs merchant account). See DRIFT-LOG 2026-11-11, Plans & Billing Review v1.1. |
+| 8-9 | M12 | Billing: plan catalog + enforcement + admin + **Paymob** (EGP, first) then Paddle (USD); GitHub + Slack + webhooks + emails |
 | 9 | M13 | CLI tool + GitHub Action |
 | 10 | M14, M15 | On-prem agent + testing + launch |
 
