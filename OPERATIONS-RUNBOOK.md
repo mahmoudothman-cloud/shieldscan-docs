@@ -986,7 +986,15 @@ Cron: `0 3 * * * poetry run python scripts/cleanup_retention.py`
 
 ### 6.6 Plan Catalog & Subscriptions (M12)
 
-Plans, prices and limits are rows, not code. Until the admin API (M12 slice 3) exists:
+Plans, prices and limits are rows, not code. The platform admin edits them in the dashboard
+(Settings → Platform admin → Plans / Organizations) or through `/v1/admin/*`; the commands below
+are the emergency path when the dashboard is down.
+
+```sql
+-- Make an account a platform admin (never via API):
+UPDATE users SET is_platform_admin = true WHERE email = 'founder@example.com';
+```
+
 
 ```bash
 # Put an org on a plan (manual subscription; cancels the current one, clears the limits cache)
