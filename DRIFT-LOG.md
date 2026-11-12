@@ -61,6 +61,14 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-13 — `POST /scans/compare` moved onto identity links; dashboard comparison view
+
+**What was there.** Task 4.6's compare partitioned by `Vulnerability.fingerprint` — the first-promoted raw finding, which depends on batch order (DRIFT-LOG 2026-11-10 flagged it; the CLI's PR delta had already gone its own way on identity links).
+
+**What was built (api `a223320`, `7ca700a`).** `services/scan_compare.py` walks `previous_id` back from the current scan's rows to the baseline (through intermediate scans) and `superseded_by_id` forward from the baseline's rows to their terminal row. Categories: new, regressions (flagged rows that do not reach the baseline), persisting, fixed (terminal row RESOLVED outside the current scan), not_covered (terminal row still OPEN outside the current scan — the current scan did not look), plus a triaged count (FALSE_POSITIVE / ACCEPTED_RISK hidden). `baseline_scan_id` is optional and defaults to the previous finished scan of the same type — the identity pass's own baseline; reversed input is 409 `baseline_not_older`. `summary.scope_covered` reuses `scope_covers()`; `summary.scope_known` is false when either scan predates scope recording, because two empty configs compare as "covered" by the legacy rule that auto-resolve keeps. Response shape changed; no external consumer. Dashboard: "Changes since the previous scan" card on the scan page with the five buckets, finding lists, a baseline picker and the scope note.
+
+**Checked live on Juice Shop.** Latest quick vs the empty quick before it: 1 new, 10 regressions — the auto-resolve episode of 2026-11-10, now visible as such. Quick vs the 11-07 full scan: 9 persisting, 18 not_covered (a quick scan does not run the engines that found them), 11 "fixed" that are really that episode's auto-resolves. Full vs full (11-07 vs 11-06): 38 persisting, 2 fixed, 0 new. The numbers agree with the open counts and the CLI delta, which was the point.
+
 ### 2026-11-11 — M12 starts with a database plan catalog, EGP ledger and Paymob first; the ladder is reconciled
 
 **What the docs said.** SPEC §9.1 had one ladder ($29/$99/$299, Business unlimited), review v4.2 §7 C2 another ($29/$79/$295 with EGP display prices and a USD ledger), and the plan row for M12 said "Stripe billing". Nothing in code enforced any of it (`/fix`, reports, compliance and tool-health carried "forward-pinned to billing").

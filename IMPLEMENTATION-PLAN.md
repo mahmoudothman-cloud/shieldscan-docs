@@ -3225,6 +3225,7 @@ git push origin v1.0.0
 | — | **M12 slice 2 status 2026-11-11** | Enforcement shipped: 402 `plan_limit_reached` at nine points (projects, members, API keys, scans per type, recon clamp, cli_write, compliance, ai_fix, cross_layer), Settings → Plan & usage, CLI/MCP rendering (cli v0.3.1). Next: slice 3 admin API + Settings → Plans. |
 | — | **M12 slice 3 status 2026-11-13** | Platform admin shipped: `is_platform_admin`, `/v1/admin/*` (plans, versions with diff + retire, org search/detail, overrides, manual subscriptions, `admin.*` audit), dashboard `/admin/plans` + `/admin/orgs`. Next: slice 4 Paymob (blocked on merchant account). |
 | — | **M12 slice 4 status 2026-11-13** | Paymob provider + checkout + webhooks + state machine + reconcile + Settings → Billing shipped against a fake Paymob; production stays on `BILLING_PROVIDER=manual` until a merchant account exists. Next: slice 5 go-live (test-mode verification of the four assumptions, live keys, first real subscription). |
+| — | **M11.x status 2026-11-13** | Scan comparison on identity links (`/scans/compare` reworked; dashboard card on the scan page). See DRIFT-LOG 2026-11-13. |
 | 8-9 | M12 | Billing: plan catalog + enforcement + admin + **Paymob** (EGP, first) then Paddle (USD); GitHub + Slack + webhooks + emails |
 | 9 | M13 | CLI tool + GitHub Action |
 | 10 | M14, M15 | On-prem agent + testing + launch |
