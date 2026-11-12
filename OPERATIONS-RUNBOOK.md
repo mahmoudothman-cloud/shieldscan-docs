@@ -1000,6 +1000,13 @@ curl -s -H "Authorization: Bearer $TOKEN" https://app.shieldscan.odyssey-eg.com/
 curl -s https://app.shieldscan.odyssey-eg.com/v1/plans | jq '.plans[] | {code, prices: [.prices[] | {billing_interval, price_egp_cents}]}'
 ```
 
+A customer reporting "plan limit reached": `GET /v1/orgs/<id>/billing/summary` shows the cap and
+this period's usage; a one-off bump is an `org_limit_overrides` row (`key`, `value`, `reason`,
+optional `expires_at`) followed by `DEL shieldscan:limits:<org-id>` — the admin UI for this is
+M12 slice 3. If enforcement itself misbehaves (bad catalog edit, limits resolving wrongly), set
+`PLAN_LIMITS_ENFORCED=false` in `.env` and restart `shieldscan-api` + `shieldscan-worker`: every
+cap and feature gate passes, metering and the billing summary keep working.
+
 Changing a price or a limit = insert a new `plan_versions` row and set `retired_at` on the old
 one (existing subscriptions keep their version); never UPDATE a live version's `limits` in place.
 The effective-limits cache is `shieldscan:limits:<org-id>` (60 s TTL) — `DEL` it after a manual
