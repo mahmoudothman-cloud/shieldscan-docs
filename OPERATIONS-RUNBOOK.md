@@ -1021,6 +1021,53 @@ The effective-limits cache is `shieldscan:limits:<org-id>` (60 s TTL) — `DEL` 
 SQL change. `org_subscriptions`, `org_limit_overrides` and `usage_counters` are RLS tables: set
 `app.current_org_id` before touching them in psql.
 
+### 6.7 Billing (Paymob) — switching on and operating
+
+Production runs `BILLING_PROVIDER=manual` until the Paymob merchant account exists. To switch on
+(staging first, with test-mode keys):
+
+```bash
+# .env
+BILLING_PROVIDER=paymob
+PAYMOB_API_KEY=...            # dashboard → Settings → Account info
+PAYMOB_SECRET_KEY=...         # dashboard → Settings → Account info (sk_test_… / sk_live_…)
+PAYMOB_PUBLIC_KEY=...         # pk_test_… / pk_live_…
+PAYMOB_HMAC_SECRET=...        # dashboard → Settings → Account info → HMAC
+PAYMOB_CARD_INTEGRATION_ID=   # a 3DS card integration
+PAYMOB_MOTO_INTEGRATION_ID=   # a MOTO integration (renewals on the saved token)
+PAYMOB_WEBHOOK_URL=https://app.shieldscan.odyssey-eg.com/v1/billing/webhooks/paymob
+BILLING_GRACE_DAYS=7
+sudo systemctl restart shieldscan-api
+```
+
+Paymob plans are created lazily, one per live plan version, on the first checkout of that version
+(`plan_versions.paymob_plan_id`); publishing a new version creates a new Paymob plan on its first
+checkout — existing subscribers stay on their Paymob plan. Set the same webhook URL as the
+transaction "processed callback" in the dashboard.
+
+Nightly sweep (grace exhaustion → suspend, cancel at period end, processor read-back):
+
+```bash
+# /etc/systemd/system/shieldscan-billing-reconcile.service
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/shieldscan/shieldscan-api
+EnvironmentFile=/home/ubuntu/shieldscan/shieldscan-api/.env
+ExecStart=/home/ubuntu/.local/bin/poetry run python scripts/billing_reconcile.py
+# /etc/systemd/system/shieldscan-billing-reconcile.timer
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+Debugging a payment: `billing_events` has every webhook with its `outcome` (`activated`,
+`renewed`, `past_due`, `ignored_unmatched`, …); `invoices` has every charge per org (RLS — set
+`app.current_org_id`). A webhook that answered 401 did not pass the HMAC check — compare the
+dashboard HMAC secret with `PAYMOB_HMAC_SECRET` before anything else.
+
 ## 7. Monitoring & Observability
 
 ### 7.1 The Four Signals
