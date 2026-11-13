@@ -61,6 +61,18 @@ When addressing an entry:
 
 ## Technical decisions (non-drift)
 
+### 2026-11-13 — Compliance catalogs: Egypt PDPL + PCI DSS land; CWE ids were never joining
+
+**Where it sat.** M10.C closed with SOC 2 + ISO 27001:2013, 12 controls, 12 CWE ids, and two forward-pins: "PCI → Enterprise" and "exhaustive control/CWE coverage → post-launch". M12 slice 1 then put `egypt_pdpl` and `pci_dss` into the Growth and Business features ahead of their catalogs. This entry closes both pins (the user filed it as "M14"; the plan's M14 is the on-prem agent and keeps that name).
+
+**What was found.** Production `vulnerabilities.cwe_id` holds `"264"`, `"cwe-200"`, `"693"`, `"CWE-310"`, `"-1"` and `NULL` — the engines emit whatever the template or tool said — while the map is keyed `"CWE-89"`, so most real findings never hit a control and posture under-reported failures. Of 128 live rows, 61 have no CWE at all; the 12 most frequent ids that did exist were not in the map.
+
+**What was built (api `eec8fc9` + `a06dd08`).** `normalize_cwe()` ("CWE-n" from any spelling; placeholders → None) applied on the vulnerability side at promotion and on the mapper's read side for legacy rows. Two frameworks: `egypt_pdpl` (Law No. 151/2020 — Art.2, Art.3, Art.4(6) controller security measures, Art.5(7) processor protection, Art.7 72-hour breach notification, Art.8 DPO, Art.12/13 sensitive data, Art.14 cross-border transfer; article numbers from the Andersen Egypt English translation) and `pci_dss` v4.0.1 (1.3, 2.2, 3.5, 4.2, 6.2, 6.3, 6.4, 7.2, 8.3, 10.2, 11.3). CWE map widened from 12 to 46 ids across all four frameworks, grouped by theme (injection, access, auth, crypto at rest / in transit, exposure, configuration, patching, logging) and chosen from what the engines emit. Migration `f7a5b2c3d4e6` is generated from the module literal and idempotent. Controls a scanner cannot evidence (Art.7, Art.8, Art.14, 11.3's cadence, CC8.1) stay `not_assessed` on purpose. The compliance page lists frameworks outside the plan with a link to plans.
+
+**Checked live on the demo org after the migration.** SOC 2 CC6.1/CC6.6/CC6.7 failing, ISO A.9.4.1/A.13.1.1/A.14.2.1/A.14.2.5, PDPL Art.3/Art.4(6)/Art.5(7), PCI 2.2/4.2/6.2/6.4/7.2 — all driven by findings whose ids (`264`, `cwe-200`, `693`, `319`) had matched nothing the day before. Seed-migration note: asyncpg refuses a named bind used twice with different inferred types (`AmbiguousParameterError`); the migration casts every bind explicitly (`a06dd08`).
+
+**Still representative, not exhaustive**: the maps say which controls a finding *bears on*; an auditor reads them as evidence pointers, not as a certification. ISO 27001:2022 renumbering is still a future migration.
+
 ### 2026-11-13 — `POST /scans/compare` moved onto identity links; dashboard comparison view
 
 **What was there.** Task 4.6's compare partitioned by `Vulnerability.fingerprint` — the first-promoted raw finding, which depends on batch order (DRIFT-LOG 2026-11-10 flagged it; the CLI's PR delta had already gone its own way on identity links).
