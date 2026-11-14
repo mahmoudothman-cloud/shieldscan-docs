@@ -1107,6 +1107,20 @@ answering 429 → 10 enrolments per IP per hour; wait or enrol from another addr
 **Revoke.** `DELETE /v1/orgs/{org}/agents/{id}` (or the dashboard): the key stops at once and
 bound projects are unbound so their next scan does not sit in a queue nobody reads.
 
+**The binary (engine `cmd/agent`).** Built in the engine's CI beside the worker; locally
+`go build -ldflags "-X main.version=<tag>" -o bin/shieldscan-agent ./cmd/agent`. Install:
+`deploy/agent/shieldscan-agent.service` (its header has the five commands). The agent finds
+tools on `PATH` or under `SHIELDSCAN_TOOLS_DIR`, honours the worker's `SHIELDSCAN_<TOOL>_BINARY`
+overrides, and needs `SHIELDSCAN_NUCLEI_TEMPLATES` (default `~/nuclei-templates`).
+`shieldscan-agent doctor` prints each tool's status and version and whether the API answers;
+exit 1 means something is missing. Logs are JSON on stderr; the `run` exit codes are 0 clean
+stop, 1 config/state error, 3 revoked (systemd does not restart on 3).
+
+On the OVH box the demo agent `ovh-onprem` runs from `~/shieldscan/shieldscan-engine/bin/`
+with state in `~/shieldscan/agent-state/`, started with `nohup` (log `/tmp/shieldscan-agent.log`)
+— not a unit yet; it does not survive a reboot. Restart it with the same environment the
+worker uses (`PATH` incl. `~/.local/bin`, `SHIELDSCAN_NIKTO_BINARY`, `SHIELDSCAN_NIKTO_TLS_CAPABLE=1`).
+
 ## 7. Monitoring & Observability
 
 ### 7.1 The Four Signals
