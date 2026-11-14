@@ -3227,6 +3227,7 @@ git push origin v1.0.0
 | — | **M12 slice 4 status 2026-11-13** | Paymob provider + checkout + webhooks + state machine + reconcile + Settings → Billing shipped against a fake Paymob; production stays on `BILLING_PROVIDER=manual` until a merchant account exists. Next: slice 5 go-live (test-mode verification of the four assumptions, live keys, first real subscription). |
 | — | **M11.x status 2026-11-13** | Scan comparison on identity links (`/scans/compare` reworked; dashboard card on the scan page). See DRIFT-LOG 2026-11-13. |
 | — | **M10.C follow-up status 2026-11-13** | Egypt PDPL + PCI DSS catalogs, CWE map 12 → 46 ids, CWE normalisation on both sides of the join. Closes the M10.C forward-pins "PCI → Enterprise" and "exhaustive coverage → post-launch". See DRIFT-LOG 2026-11-13. |
+| — | **M14 slice 1 status 2026-11-14** | On-prem agents on the API (api `e8e0a1e`): `agents` table (credential-indexed, ADR-012 amendment), `/orgs/{org}/agents` create/list/revoke, `/agent/*` gateway (enroll, heartbeat, long-poll, events/complete/fail bridged to Redis), orchestrator routing to per-agent queues, project binding (skips domain verification), plan v2 `agents.max` 1/5/∞. Checked live. Next: slice 3 engine `cmd/agent`, slice 5 live demo, then dashboard + distribution. See DRIFT-LOG 2026-11-14, On-Prem Agent Design v1.0. |
 | 8-9 | M12 | Billing: plan catalog + enforcement + admin + **Paymob** (EGP, first) then Paddle (USD); GitHub + Slack + webhooks + emails |
 | 9 | M13 | CLI tool + GitHub Action |
 | 10 | M14, M15 | On-prem agent + testing + launch |

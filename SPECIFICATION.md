@@ -1412,6 +1412,7 @@ Per §14.1 asymmetric-cost meta-principle (this invocation enumerated as §14.1 
   (b) explicitly filters `WHERE organization_id = :authenticated_org`.
 - Tables in this category must be enumerated in a `CREDENTIAL_INDEXED_TABLES` constant in `policies.py` with a justification string.
 - The first table in this category: `api_keys`.
+- **Amendment 2026-11-14 (M14):** the second table is `agents` — the on-prem agent key (`ss_agent_…`, SHA-256 at rest) is looked up by hash before the tenant is known, the same shape as `api_keys`. Org-facing reads filter `organization_id` explicitly; the gateway sets the tenant context from the row it found; `tests/models/test_credential_indexed_rls.py` pins the allow-list to `{api_keys, agents}`. See DRIFT-LOG 2026-11-14.
 
 **Why this is not a security regression:**
 - `api_keys` rows can only be read via:

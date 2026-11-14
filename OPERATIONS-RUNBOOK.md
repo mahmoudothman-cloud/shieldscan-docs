@@ -1068,6 +1068,45 @@ Debugging a payment: `billing_events` has every webhook with its `outcome` (`act
 `app.current_org_id`). A webhook that answered 401 did not pass the HMAC check — compare the
 dashboard HMAC secret with `PAYMOB_HMAC_SECRET` before anything else.
 
+### 6.8 On-prem agents (M14)
+
+An agent is a customer-run engine processor that reaches the API only over outbound HTTPS
+(`/v1/agent/*`). The API never connects to it.
+
+**Lifecycle.** Org admin creates the agent (Settings → Agents, or `POST /v1/orgs/{org}/agents`) →
+a one-time `ss_enrol_…` token valid 24 h is shown once → the customer runs the printed
+`shieldscan-agent enroll --api … --token …` → the agent holds an `ss_agent_…` key (SHA-256 at
+rest in `agents.key_hash`) and heartbeats every 30 s. `status` in the API is `pending` / `active`
+/ `revoked`; the list view adds `offline` when `last_seen_at` is older than `AGENT_OFFLINE_AFTER_S`
+(default 90 s).
+
+**Capacity.** `agents.max` is a plan limit (growth 1, business 5, enterprise unlimited — plan v2).
+Orgs still on v1 of a plan see `agents.max = 0` and get 402 on create; move them with
+`scripts/set_org_plan.py <slug> <code>` (re-subscribes to the current version) or an override.
+
+**Where jobs go.** A scan on an agent-bound project (`projects.agent_id`) is LPUSHed to
+`shieldscan:agent:<agent_id>:queue`, not the shared priority lists; the dispatched payload is
+kept at `shieldscan:agent-requeue:payload:<job_id>` for 105 min. A job leased for 35 min without
+a report is re-queued once (marker `shieldscan:agent-requeue:<job_id>`), then failed. Progress
+and completion go onto the same stream / channel the cloud worker uses, so SSE and the
+completion consumer need nothing.
+
+```bash
+# agents and their last heartbeat
+PSQL "select name, status, key_prefix, version, hostname, last_seen_at from agents order by created_at desc;"
+# how many jobs are waiting on an agent that is not reading them
+redis-cli --scan --pattern 'shieldscan:agent:*:queue' | while read k; do echo "$k $(redis-cli llen $k)"; done
+```
+
+**Symptoms.** Scan create answers 409 `agent_offline` → the bound agent has not heartbeated
+for 90 s: check the customer side (`shieldscan-agent doctor`), not the API. A queue above keeps
+growing → the agent polls but drops payloads (log line `dropped payload for job … not leased
+to it`): the project was unbound or rebound mid-flight; the lease sweep clears it. `enroll`
+answering 429 → 10 enrolments per IP per hour; wait or enrol from another address.
+
+**Revoke.** `DELETE /v1/orgs/{org}/agents/{id}` (or the dashboard): the key stops at once and
+bound projects are unbound so their next scan does not sit in a queue nobody reads.
+
 ## 7. Monitoring & Observability
 
 ### 7.1 The Four Signals
