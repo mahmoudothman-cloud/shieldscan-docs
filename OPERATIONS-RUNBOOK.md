@@ -1107,6 +1107,13 @@ answering 429 → 10 enrolments per IP per hour; wait or enrol from another addr
 **Revoke.** `DELETE /v1/orgs/{org}/agents/{id}` (or the dashboard): the key stops at once and
 bound projects are unbound so their next scan does not sit in a queue nobody reads.
 
+**Releasing the binary.** `git tag -a agent/vX.Y.Z -m … && git push origin agent/vX.Y.Z` in the
+engine repo; the `agent-release` workflow publishes to
+https://github.com/mahmoudothman-cloud/shieldscan-agent/releases (archives, `checksums.txt`,
+Sigstore `.pem`/`.sig`). It needs the engine secret `AGENT_RELEASE_TOKEN` (fine-grained PAT,
+`contents: write` on the public repo only — rotate before it expires). Customers install with
+`curl -fsSL https://raw.githubusercontent.com/mahmoudothman-cloud/shieldscan-agent/main/install.sh | sh`.
+
 **The binary (engine `cmd/agent`).** Built in the engine's CI beside the worker; locally
 `go build -ldflags "-X main.version=<tag>" -o bin/shieldscan-agent ./cmd/agent`. Install:
 `deploy/agent/shieldscan-agent.service` (its header has the five commands). The agent finds
@@ -1116,7 +1123,7 @@ overrides, and needs `SHIELDSCAN_NUCLEI_TEMPLATES` (default `~/nuclei-templates`
 exit 1 means something is missing. Logs are JSON on stderr; the `run` exit codes are 0 clean
 stop, 1 config/state error, 3 revoked (systemd does not restart on 3).
 
-On the OVH box the demo agent `ovh-onprem` runs from `~/shieldscan/shieldscan-engine/bin/`
+On the OVH box the demo agent `ovh-onprem` runs the released `~/.local/bin/shieldscan-agent` (v0.1.0)
 with state in `~/shieldscan/agent-state/`, started with `nohup` (log `/tmp/shieldscan-agent.log`)
 — not a unit yet; it does not survive a reboot. Restart it with the same environment the
 worker uses (`PATH` incl. `~/.local/bin`, `SHIELDSCAN_NIKTO_BINARY`, `SHIELDSCAN_NIKTO_TLS_CAPABLE=1`).
