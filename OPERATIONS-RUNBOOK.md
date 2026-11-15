@@ -1123,10 +1123,17 @@ overrides, and needs `SHIELDSCAN_NUCLEI_TEMPLATES` (default `~/nuclei-templates`
 exit 1 means something is missing. Logs are JSON on stderr; the `run` exit codes are 0 clean
 stop, 1 config/state error, 3 revoked (systemd does not restart on 3).
 
-On the OVH box the demo agent `ovh-onprem` runs the released `~/.local/bin/shieldscan-agent` (v0.1.0)
-with state in `~/shieldscan/agent-state/`, started with `nohup` (log `/tmp/shieldscan-agent.log`)
-— not a unit yet; it does not survive a reboot. Restart it with the same environment the
-worker uses (`PATH` incl. `~/.local/bin`, `SHIELDSCAN_NIKTO_BINARY`, `SHIELDSCAN_NIKTO_TLS_CAPABLE=1`).
+On the OVH box the demo agent `ovh-onprem` is the systemd unit `shieldscan-agent` (enabled),
+running the released `~/.local/bin/shieldscan-agent` as `ubuntu` with state in
+`~/shieldscan/agent-state/`; the drop-in `/etc/systemd/system/shieldscan-agent.service.d/override.conf`
+carries the worker's `PATH` and nikto variables. `journalctl -u shieldscan-agent -f` for logs.
+When writing such a drop-in, reset `ReadWritePaths=` (empty line) before adding your own path —
+the base unit's `/var/lib/shieldscan-agent` entry is additive and systemd fails at `NAMESPACE`
+if that directory does not exist.
+
+**Why a scan has fewer jobs than engines.** The phase-2 audit's `skipped_tools` names engines
+that got no job: `not_installed_on_agent` (the agent's heartbeat does not list it as ok) or
+`plain_http_target` (TLS-only engine on an `http://` surface). Neither is an error.
 
 ## 7. Monitoring & Observability
 
